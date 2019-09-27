@@ -664,12 +664,14 @@ ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 					retval = CUSE_ERR_WOULDBLOCK;
 				break;
 			}
+			/* check if we got some data */
+			if (retval != 0)
+				break;
 			pass->rx_busy = 1;
 			ass_wait();
 			pass->rx_busy = 0;
 			if (cuse_got_peer_signal() == 0) {
-				if (retval == 0)
-					retval = CUSE_ERR_SIGNAL;
+				retval = CUSE_ERR_SIGNAL;
 				break;
 			}
 			continue;
@@ -1758,7 +1760,7 @@ ass_pipe(int dummy)
 }
 
 static void
-ass_cuse_hup(int sig)
+ass_hup(int sig)
 {
 	ass_wakeup();
 }
@@ -1766,8 +1768,6 @@ ass_cuse_hup(int sig)
 static void *
 ass_cuse_process(void *arg)
 {
-	signal(SIGHUP, &ass_cuse_hup);
-
 	while (1) {
 		if (cuse_wait_and_process() != 0)
 			break;
@@ -1860,7 +1860,9 @@ main(int argc, char **argv)
 		if (daemon(0, 0))
 			errx(EX_UNAVAILABLE, "Could not become daemon");
 	}
+
 	signal(SIGPIPE, ass_pipe);
+	signal(SIGHUP, ass_hup);
 
 	ass_init();
 
