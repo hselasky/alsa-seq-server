@@ -500,15 +500,18 @@ ass_send_synth_event(struct snd_seq_event *ev, int fd)
 		buffer[1] |= ev->data.note.note & 0x7F;
 		buffer[2] |= ev->data.note.velocity & 0x7F;
 		break;
-	case SNDRV_SEQ_EVENT_CONTROLLER:
-	case SNDRV_SEQ_EVENT_PGMCHANGE:
 	case SNDRV_SEQ_EVENT_CHANPRESS:
-		buffer[0] |= ev->data.note.channel & 0xF;
+	case SNDRV_SEQ_EVENT_PGMCHANGE:
+		buffer[0] |= ev->data.control.channel & 0xF;
+		buffer[1] |= ev->data.control.value & 0x7F;
+		break;
+	case SNDRV_SEQ_EVENT_CONTROLLER:
+		buffer[0] |= ev->data.control.channel & 0xF;
 		buffer[1] |= ev->data.control.param & 0x7F;
 		buffer[2] |= ev->data.control.value & 0x7F;
 		break;
 	case SNDRV_SEQ_EVENT_PITCHBEND:
-		buffer[0] |= ev->data.note.channel & 0xF;
+		buffer[0] |= ev->data.control.channel & 0xF;
 		buffer[1] |= (ev->data.control.value + 8192) & 0x7F;
 		buffer[2] |= ((ev->data.control.value + 8192) >> 7) & 0x7F;
 		break;
@@ -575,15 +578,18 @@ ass_receive_synth_event(struct snd_seq_event *ev,
 			ev->data.note.note = parse->temp_cmd[2] & 0x7F;
 			ev->data.note.velocity = parse->temp_cmd[3] & 0x7F;
 			break;
-		case SNDRV_SEQ_EVENT_CONTROLLER:
 		case SNDRV_SEQ_EVENT_PGMCHANGE:
 		case SNDRV_SEQ_EVENT_CHANPRESS:
-			ev->data.note.channel = parse->temp_cmd[1] & 0xF;
+			ev->data.control.channel = parse->temp_cmd[1] & 0xF;
+			ev->data.control.value = parse->temp_cmd[2] & 0x7F;
+			break;
+		case SNDRV_SEQ_EVENT_CONTROLLER:
+			ev->data.control.channel = parse->temp_cmd[1] & 0xF;
 			ev->data.control.param = parse->temp_cmd[2] & 0x7F;
 			ev->data.control.value = parse->temp_cmd[3] & 0x7F;
 			break;
 		case SNDRV_SEQ_EVENT_PITCHBEND:
-			ev->data.note.channel = parse->temp_cmd[1] & 0xF;
+			ev->data.control.channel = parse->temp_cmd[1] & 0xF;
 			ev->data.control.value =
 			    (parse->temp_cmd[2] & 0x7F) |
 			    ((parse->temp_cmd[3] & 0x7F) << 7);
