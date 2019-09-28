@@ -462,7 +462,7 @@ ass_get_event_dest_client(struct snd_seq_event *event, int filter)
         return (dest);
 }
 
-static void
+static bool
 ass_send_synth_event(struct snd_seq_event *ev, int fd)
 {
 	uint8_t buffer[3] = {};
@@ -490,7 +490,7 @@ ass_send_synth_event(struct snd_seq_event *ev, int fd)
 		buffer[0] |= 0xE0;
 		break;
         default:
-		return;
+		return (true);
         }
 
         switch (ev->type) {
@@ -514,7 +514,7 @@ ass_send_synth_event(struct snd_seq_event *ev, int fd)
 		buffer[2] |= ((ev->data.control.value + 8192) >> 7) & 0x7F;
                 break;
         }
-	write(fd, buffer, 3);
+	return (write(fd, buffer, 3) == 3);
 }
 
 static bool
@@ -607,11 +607,13 @@ ass_deliver_single_event(struct ass_client *client,
 
         switch (dest->type) {
         case USER_CLIENT:
-		ass_fifo_push(&dest->rx_fifo, event);
+		if (!ass_fifo_push(&dest->rx_fifo, event))
+			client->event_lost++;
                 break;
         case KERNEL_CLIENT:
-		if (dest->tx_fd > -1)
-			ass_send_synth_event(event, dest->tx_fd);
+		if (dest->tx_fd > -1 &&
+		    !ass_send_synth_event(event, dest->tx_fd))
+			client->event_lost++;
                 break;
         default:
                 break;
