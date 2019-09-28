@@ -27,14 +27,14 @@
 /*
  *  Based on ALSA sequencer Client Manager
  *  Copyright (c) 1998-2001 by Frank van de Pol <fvdpol@coil.demon.nl>
- *                             Jaroslav Kysela <perex@perex.cz>
- *                             Takashi Iwai <tiwai@suse.de>
+ *			       Jaroslav Kysela <perex@perex.cz>
+ *			       Takashi Iwai <tiwai@suse.de>
  */
 
 /*
  *   Based on ALSA sequencer Ports
  *   Copyright (c) 1998 by Frank van de Pol <fvdpol@coil.demon.nl>
- *                         Jaroslav Kysela <perex@perex.cz>
+ *			   Jaroslav Kysela <perex@perex.cz>
  */
 
 #include <stdint.h>
@@ -74,13 +74,13 @@ struct ass_parse {
 	uint8_t	temp_0[4];
 	uint8_t	temp_1[4];
 	uint8_t	state;
-#define	ASS_ST_UNKNOWN   0		/* scan for command */
-#define	ASS_ST_1PARAM    1
-#define	ASS_ST_2PARAM_1  2
-#define	ASS_ST_2PARAM_2  3
-#define	ASS_ST_SYSEX_0   4
-#define	ASS_ST_SYSEX_1   5
-#define	ASS_ST_SYSEX_2   6
+#define	ASS_ST_UNKNOWN	 0		/* scan for command */
+#define	ASS_ST_1PARAM	 1
+#define	ASS_ST_2PARAM_1	 2
+#define	ASS_ST_2PARAM_2	 3
+#define	ASS_ST_SYSEX_0	 4
+#define	ASS_ST_SYSEX_1	 5
+#define	ASS_ST_SYSEX_2	 6
 };
 
 #define	ASS_FIFO_MAX 1024
@@ -444,19 +444,19 @@ ass_port_by_number(struct ass_client *pass, int number)
 static struct ass_client *
 ass_get_event_dest_client(struct snd_seq_event *event, int filter)
 {
-        struct ass_client *dest;
+	struct ass_client *dest;
 
-        dest = ass_client_by_number(event->dest.client);
-        if (dest == NULL)
+	dest = ass_client_by_number(event->dest.client);
+	if (dest == NULL)
 		return (NULL);
-        if (!dest->accept_input)
+	if (!dest->accept_input)
 		return (NULL);
-        if ((dest->filter & SNDRV_SEQ_FILTER_USE_EVENT) &&
-            (dest->event_filter[event->type / 8] & (1 << (event->type % 8))) == 0)
+	if ((dest->filter & SNDRV_SEQ_FILTER_USE_EVENT) &&
+	    (dest->event_filter[event->type / 8] & (1 << (event->type % 8))) == 0)
 		return (NULL);
-        if (filter && !(dest->filter & filter))
+	if (filter && !(dest->filter & filter))
 		return (NULL);
-        return (dest);
+	return (dest);
 }
 
 static bool
@@ -607,50 +607,50 @@ static void
 ass_deliver_single_event(struct ass_client *client,
     struct snd_seq_event *event, int filter)
 {
-        struct ass_client *dest;
-        struct ass_port *dest_port;
+	struct ass_client *dest;
+	struct ass_port *dest_port;
 
-        dest = ass_get_event_dest_client(event, filter);
-        if (dest == NULL)
+	dest = ass_get_event_dest_client(event, filter);
+	if (dest == NULL)
 		return;
-        dest_port = ass_port_by_number(dest, event->dest.port);
-        if (dest_port == NULL)
+	dest_port = ass_port_by_number(dest, event->dest.port);
+	if (dest_port == NULL)
 		return;
-        if (!ass_check_port_perm(dest_port, SNDRV_SEQ_PORT_CAP_WRITE))
+	if (!ass_check_port_perm(dest_port, SNDRV_SEQ_PORT_CAP_WRITE))
 		return;
 
-        switch (dest->type) {
-        case USER_CLIENT:
+	switch (dest->type) {
+	case USER_CLIENT:
 		if (!ass_fifo_push(&dest->rx_fifo, event))
 			client->event_lost++;
-                break;
-        case KERNEL_CLIENT:
+		break;
+	case KERNEL_CLIENT:
 		if (dest->tx_fd > -1 &&
 		    !ass_send_synth_event(event, dest->tx_fd))
 			client->event_lost++;
-                break;
-        default:
-                break;
-        }
+		break;
+	default:
+		break;
+	}
 }
 
 static void
 ass_deliver_to_subscribers(struct ass_client *client,
     struct snd_seq_event *event)
 {
-        struct ass_subscribers *subs;
-        struct ass_port *src_port;
+	struct ass_subscribers *subs;
+	struct ass_port *src_port;
 
-        src_port = ass_port_by_number(client, event->source.port);
-        if (src_port == NULL)
+	src_port = ass_port_by_number(client, event->source.port);
+	if (src_port == NULL)
 		return;
 
 	TAILQ_FOREACH(subs, &src_port->c_src.head, src_entry) {
-                if (subs->ref_count != 2)
+		if (subs->ref_count != 2)
 			continue;
-                event->dest = subs->info.dest;
-                ass_deliver_single_event(client, event, 0);
-        }
+		event->dest = subs->info.dest;
+		ass_deliver_single_event(client, event, 0);
+	}
 }
 
 static int
@@ -932,8 +932,8 @@ ass_port_get_subscription(struct ass_port_subs_info *src_grp,
 	return (CUSE_ERR_NO_DEVICE);
 }
 
-#define	PERM_RD         (SNDRV_SEQ_PORT_CAP_READ|SNDRV_SEQ_PORT_CAP_SUBS_READ)
-#define	PERM_WR         (SNDRV_SEQ_PORT_CAP_WRITE|SNDRV_SEQ_PORT_CAP_SUBS_WRITE)
+#define	PERM_RD		(SNDRV_SEQ_PORT_CAP_READ|SNDRV_SEQ_PORT_CAP_SUBS_READ)
+#define	PERM_WR		(SNDRV_SEQ_PORT_CAP_WRITE|SNDRV_SEQ_PORT_CAP_SUBS_WRITE)
 
 static int
 ass_check_subscription_permission(struct ass_client *client,
