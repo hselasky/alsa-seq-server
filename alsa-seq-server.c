@@ -157,7 +157,6 @@ static mode_t mode = 0666;
 static const char *dname = "snd/seq";
 static bool background;
 
-#if 0
 static const uint8_t ass_cmd_to_len[16] = {
 	[0x0] = 0,			/* reserved */
 	[0x1] = 0,			/* reserved */
@@ -176,7 +175,6 @@ static const uint8_t ass_cmd_to_len[16] = {
 	[0xE] = 3,			/* bytes */
 	[0xF] = 1,			/* bytes */
 };
-#endif
 
 #ifdef HAVE_DEBUG
 #define	DPRINTF(fmt, ...) printf("%s:%d: " fmt, __FUNCTION__, __LINE__,## __VA_ARGS__)
@@ -253,7 +251,7 @@ ass_gid(const char *s)
  *    0: No command
  * Else: Command is complete
  */
-static bool
+static uint8_t
 ass_midi_convert(struct ass_parse *parse, uint8_t cn, uint8_t b)
 {
 	uint8_t p0 = (cn << 4);
@@ -293,7 +291,6 @@ ass_midi_convert(struct ass_parse *parse, uint8_t cn, uint8_t b)
 			parse->temp_cmd = parse->temp_1;
 			parse->state = ASS_ST_UNKNOWN;
 			return (1);
-
 		case 0xf7:		/* system exclusive end */
 			switch (parse->state) {
 			case ASS_ST_SYSEX_0:
@@ -303,20 +300,20 @@ ass_midi_convert(struct ass_parse *parse, uint8_t cn, uint8_t b)
 				parse->temp_1[3] = 0;
 				parse->temp_cmd = parse->temp_1;
 				parse->state = ASS_ST_UNKNOWN;
-				return (1);
+				return (2);
 			case ASS_ST_SYSEX_1:
 				parse->temp_1[0] = p0 | 0x06;
 				parse->temp_1[2] = 0xf7;
 				parse->temp_1[3] = 0;
 				parse->temp_cmd = parse->temp_1;
 				parse->state = ASS_ST_UNKNOWN;
-				return (1);
+				return (2);
 			case ASS_ST_SYSEX_2:
 				parse->temp_1[0] = p0 | 0x07;
 				parse->temp_1[3] = 0xf7;
 				parse->temp_cmd = parse->temp_1;
 				parse->state = ASS_ST_UNKNOWN;
-				return (1);
+				return (2);
 			}
 			parse->state = ASS_ST_UNKNOWN;
 			break;
@@ -371,7 +368,7 @@ ass_midi_convert(struct ass_parse *parse, uint8_t cn, uint8_t b)
 			parse->temp_1[3] = b;
 			parse->temp_cmd = parse->temp_1;
 			parse->state = ASS_ST_SYSEX_0;
-			return (1);
+			return (2);
 		default:
 			break;
 		}
@@ -467,53 +464,57 @@ ass_send_synth_event(struct snd_seq_event *ev, int fd)
 {
 	uint8_t buffer[3] = {};
 
-        switch (ev->type) {
-        case SNDRV_SEQ_EVENT_NOTEON:
+	switch (ev->type) {
+	case SNDRV_SEQ_EVENT_NOTEON:
 		buffer[0] |= 0x90;
 		break;
-        case SNDRV_SEQ_EVENT_NOTEOFF:
+	case SNDRV_SEQ_EVENT_NOTEOFF:
 		buffer[0] |= 0x80;
 		break;
-        case SNDRV_SEQ_EVENT_KEYPRESS:
+	case SNDRV_SEQ_EVENT_KEYPRESS:
 		buffer[0] |= 0xA0;
-                break;
-        case SNDRV_SEQ_EVENT_CONTROLLER:
+		break;
+	case SNDRV_SEQ_EVENT_CONTROLLER:
 		buffer[0] |= 0xB0;
 		break;
-        case SNDRV_SEQ_EVENT_PGMCHANGE:
+	case SNDRV_SEQ_EVENT_PGMCHANGE:
 		buffer[0] |= 0xC0;
 		break;
-        case SNDRV_SEQ_EVENT_CHANPRESS:
+	case SNDRV_SEQ_EVENT_CHANPRESS:
 		buffer[0] |= 0xD0;
 		break;
-        case SNDRV_SEQ_EVENT_PITCHBEND:
+	case SNDRV_SEQ_EVENT_PITCHBEND:
 		buffer[0] |= 0xE0;
 		break;
-        default:
+	case SNDRV_SEQ_EVENT_SYSEX:
+		return (write(fd, &ev->data.ext.ptr, ev->data.ext.len) == ev->data.ext.len);
+	default:
 		return (true);
-        }
+	}
 
-        switch (ev->type) {
-        case SNDRV_SEQ_EVENT_NOTEON:
-        case SNDRV_SEQ_EVENT_NOTEOFF:
-        case SNDRV_SEQ_EVENT_KEYPRESS:
+	switch (ev->type) {
+	case SNDRV_SEQ_EVENT_NOTEON:
+	case SNDRV_SEQ_EVENT_NOTEOFF:
+	case SNDRV_SEQ_EVENT_KEYPRESS:
 		buffer[0] |= ev->data.note.channel & 0xF;
 		buffer[1] |= ev->data.note.note & 0x7F;
 		buffer[2] |= ev->data.note.velocity & 0x7F;
-                break;
-        case SNDRV_SEQ_EVENT_CONTROLLER:
-        case SNDRV_SEQ_EVENT_PGMCHANGE:
-        case SNDRV_SEQ_EVENT_CHANPRESS:
+		break;
+	case SNDRV_SEQ_EVENT_CONTROLLER:
+	case SNDRV_SEQ_EVENT_PGMCHANGE:
+	case SNDRV_SEQ_EVENT_CHANPRESS:
 		buffer[0] |= ev->data.note.channel & 0xF;
 		buffer[1] |= ev->data.control.param & 0x7F;
 		buffer[2] |= ev->data.control.value & 0x7F;
-                break;
-        case SNDRV_SEQ_EVENT_PITCHBEND:
+		break;
+	case SNDRV_SEQ_EVENT_PITCHBEND:
 		buffer[0] |= ev->data.note.channel & 0xF;
 		buffer[1] |= (ev->data.control.value + 8192) & 0x7F;
 		buffer[2] |= ((ev->data.control.value + 8192) >> 7) & 0x7F;
-                break;
-        }
+		break;
+	default:
+		break;
+	}
 	return (write(fd, buffer, 3) == 3);
 }
 
@@ -524,8 +525,21 @@ ass_receive_synth_event(struct snd_seq_event *ev,
 	uint8_t buffer[1];
 
 	while (read(fd, buffer, sizeof(buffer)) == 1) {
-		if (ass_midi_convert(parse, 0, buffer[0]) == 0)
+		switch (ass_midi_convert(parse, 0, buffer[0])) {
+		case 0:
 			continue;
+		case 1:
+			break;
+		default:
+			memset(ev, 0, sizeof(*ev));
+			ev->type = SNDRV_SEQ_EVENT_SYSEX;
+			ev->flags = SNDRV_SEQ_EVENT_LENGTH_VARIABLE;
+			ev->data.ext.len = ass_cmd_to_len[parse->temp_cmd[0] & 0xF];
+			/* internal hack */ 
+			memcpy(&ev->data.ext.ptr, parse->temp_cmd + 1, ev->data.ext.len);
+			return (true);
+		}
+
 		memset(ev, 0, sizeof(*ev));
 		switch ((parse->temp_cmd[1] & 0xF0) >> 4) {
 		case 0x9:
@@ -643,7 +657,7 @@ static int
 ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 {
 	struct ass_client *pass;
-	struct snd_seq_event temp;
+	struct snd_seq_event temp[2];
 	int error;
 	int retval;
 
@@ -659,7 +673,9 @@ ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 	retval = 0;
 
 	while (len >= sizeof(temp)) {
-		if (ass_fifo_pull(&pass->rx_fifo, &temp) == false) {
+		int delta;
+
+		if (ass_fifo_pull(&pass->rx_fifo, &temp[0]) == false) {
 			/* out of data */
 			if (fflags & CUSE_FFLAG_NONBLOCK) {
 				if (retval == 0)
@@ -678,9 +694,19 @@ ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 			}
 			continue;
 		}
+
+		if ((temp[0].flags & SNDRV_SEQ_EVENT_LENGTH_MASK) == SNDRV_SEQ_EVENT_LENGTH_VARIABLE) {
+			/* copy data in-place */
+			memcpy(&temp[1], &temp[0].data.ext.ptr, sizeof(temp[0].data.ext.ptr));
+			temp[0].data.ext.ptr = NULL;
+			delta = sizeof(temp);
+		} else {
+			delta = sizeof(temp[0]);
+		}
+
 		pass->rx_busy = 1;
 		ass_unlock();
-		error = cuse_copy_out(&temp, peer_ptr, sizeof(temp));
+		error = cuse_copy_out(&temp[0], peer_ptr, delta);
 		ass_lock();
 		pass->rx_busy = 0;
 
@@ -688,9 +714,9 @@ ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 			retval = error;
 			break;
 		}
-		peer_ptr = ((uint8_t *)peer_ptr) + sizeof(temp);
-		retval += sizeof(temp);
-		len -= sizeof(temp);
+		peer_ptr = (uint8_t *)peer_ptr + delta;
+		retval += delta;
+		len -= delta;
 	}
 	ass_unlock();
 
@@ -702,6 +728,7 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 {
 	struct ass_client *pass;
 	struct snd_seq_event temp;
+	uint8_t var_data[ASS_FIFO_MAX * sizeof(void *)];
 	int error;
 	int retval;
 
@@ -732,23 +759,54 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 
 		temp.source.client = pass->number;
 
-		if ((temp.flags & SNDRV_SEQ_EVENT_LENGTH_MASK) == SNDRV_SEQ_EVENT_LENGTH_VARIABLE) {
-			delta = (temp.data.ext.len & ~0xc0000000U) + sizeof(temp);
-			if (delta < 0 || delta > len) {
+		if ((temp.flags & SNDRV_SEQ_EVENT_LENGTH_MASK) ==
+		    SNDRV_SEQ_EVENT_LENGTH_VARIABLE) {
+			temp.data.ext.len &= ~0xc0000000U;
+
+			delta = temp.data.ext.len + sizeof(temp);
+			if (delta < (int)sizeof(temp) ||
+			    delta > len ||
+			    delta > (int)(sizeof(temp) + sizeof(var_data))) {
 				retval = CUSE_ERR_INVALID;
 				break;
 			}
-			/* these events are not supported */
+
+			if (temp.type == SNDRV_SEQ_EVENT_SYSEX) {
+				int off;
+
+				pass->tx_busy = 1;
+				ass_unlock();
+				error = cuse_copy_in((const uint8_t *)peer_ptr +
+				    sizeof(temp), var_data, delta - sizeof(temp));
+				ass_lock();
+				pass->tx_busy = 0;
+
+				if (error != 0) {
+					retval = error;
+					break;
+				}
+
+				/* split up and deliver the event(s) */
+				for (off = 0; off < (int)(delta - sizeof(temp)); off += sizeof(temp.data.ext.ptr)) {
+					int x = delta - sizeof(temp) - off;
+					if (x > sizeof(temp.data.ext.ptr))
+						x = sizeof(temp.data.ext.ptr);
+					temp.data.ext.len = x;
+					memcpy(&temp.data.ext.ptr, var_data + off, x);
+					ass_deliver_to_subscribers(pass, &temp);
+				}
+			}
 		} else {
 			delta = sizeof(temp);
 
 			/* check if event should be delivered */
-			if (temp.type != SNDRV_SEQ_EVENT_NONE)
+			if (temp.type != SNDRV_SEQ_EVENT_NONE &&
+			    temp.type != SNDRV_SEQ_EVENT_SYSEX &&
+			    temp.type != SNDRV_SEQ_EVENT_BOUNCE)
 				ass_deliver_to_subscribers(pass, &temp);
 		}
 
-
-		peer_ptr = ((const uint8_t *)peer_ptr) + delta;
+		peer_ptr = (const uint8_t *)peer_ptr + delta;
 		retval += delta;
 		len -= delta;
 	}
