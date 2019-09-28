@@ -1243,6 +1243,9 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 	ass_lock();
 
 	switch (cmd) {
+	case FIOASYNC:
+	case FIONBIO:
+		break;
 	case SNDRV_SEQ_IOCTL_PVERSION:
 		data.value = SNDRV_PROTOCOL_VERSION(1, 0, 2);
 		break;
