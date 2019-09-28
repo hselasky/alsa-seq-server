@@ -717,6 +717,8 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 		return (CUSE_ERR_BUSY);
 	}
 	while (len >= sizeof(temp)) {
+		int delta;
+
 		pass->tx_busy = 1;
 		ass_unlock();
 		error = cuse_copy_in(peer_ptr, &temp, sizeof(temp));
@@ -730,11 +732,25 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 
 		temp.source.client = pass->number;
 
-		ass_deliver_to_subscribers(pass, &temp);
+		if ((temp.flags & SNDRV_SEQ_EVENT_LENGTH_MASK) == SNDRV_SEQ_EVENT_LENGTH_VARIABLE) {
+			delta = (temp.data.ext.len & ~0xc0000000U) + sizeof(temp);
+			if (delta < 0 || delta > len) {
+				retval = CUSE_ERR_INVALID;
+				break;
+			}
+			/* these events are not supported */
+		} else {
+			delta = sizeof(temp);
 
-		peer_ptr = ((const uint8_t *)peer_ptr) + sizeof(temp);
-		retval += sizeof(temp);
-		len -= sizeof(temp);
+			/* check if event should be delivered */
+			if (temp.type != SNDRV_SEQ_EVENT_NONE)
+				ass_deliver_to_subscribers(pass, &temp);
+		}
+
+
+		peer_ptr = ((const uint8_t *)peer_ptr) + delta;
+		retval += delta;
+		len -= delta;
 	}
 	ass_unlock();
 
