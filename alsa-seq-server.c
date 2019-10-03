@@ -1590,11 +1590,15 @@ ass_poll(struct cuse_dev *pdev, int fflags, int events)
 
 	ass_lock();
 	if (events & CUSE_POLL_READ) {
-		if (!ass_fifo_empty(&pass->rx_fifo))
-			retval |= CUSE_POLL_READ;
+		if (pass->accept_input) {
+			if (!ass_fifo_empty(&pass->rx_fifo))
+				retval |= CUSE_POLL_READ;
+		}
 	}
 	if (events & CUSE_POLL_WRITE) {
-		retval |= CUSE_POLL_WRITE;
+		if (pass->accept_output) {
+			retval |= CUSE_POLL_WRITE;
+		}
 	}
 	ass_unlock();
 
