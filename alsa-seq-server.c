@@ -1685,7 +1685,7 @@ ass_watchdog_sub(struct ass_client *pass)
 	if (pass->tx_name == NULL) {
 		/* do nothing */
 	} else if (pass->tx_fd < 0) {
-		fd = open(pass->tx_name, O_WRONLY);
+		fd = open(pass->tx_name, O_WRONLY | O_NONBLOCK);
 		if (fd > -1) {
 			pass->tx_fd = fd;
 			fcntl(pass->tx_fd, F_SETFL, (int)0);
