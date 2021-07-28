@@ -25,8 +25,6 @@
 # SUCH DAMAGE.
 #
 
-VERSION=1.0.0
-
 PROG=		alsa-seq-server
 
 PREFIX?=	/usr/local
@@ -60,21 +58,5 @@ MAN=		alsa-seq-server.8
 .else
 MAN=
 .endif
-
-package:
-	make clean cleandepend HAVE_MAN=YES
-
-	tar -cvf temp.tar \
-		Makefile alsa-seq-server.[c8] asequencer.h asound.h
-
-	rm -rf alsa-seq-server-${VERSION}
-
-	mkdir alsa-seq-server-${VERSION}
-
-	tar -xvf temp.tar -C alsa-seq-server-${VERSION}
-
-	rm -rf temp.tar
-
-	tar --uid=0 --gid=0 -jcvf alsa-seq-server-${VERSION}.tar.bz2 alsa-seq-server-${VERSION}
 
 .include <bsd.prog.mk>
