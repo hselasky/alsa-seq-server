@@ -1,7 +1,7 @@
 #
 # $FreeBSD: $
 #
-# Copyright (c) 2019 Hans Petter Selasky. All rights reserved.
+# Copyright (c) 2019-2021 Hans Petter Selasky. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -44,12 +44,7 @@ CFLAGS+=	-DHAVE_DEBUG
 CFLAGS+=	-g
 .endif
 
-.if defined(HAVE_CUSE)
-CFLAGS+=	-DHAVE_CUSE
 LDFLAGS+=	-lcuse
-.else
-LDFLAGS+=	-lcuse4bsd
-.endif
 
 SRCS=		alsa-seq-server.c
 
