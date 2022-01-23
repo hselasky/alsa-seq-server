@@ -1176,6 +1176,12 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 				data.cinfo.client++;
 			pother = ass_client_by_number(data.cinfo.client);
 			if (pother != NULL) {
+				/* Skip listing disconnected clients. */
+				if (pother->type == KERNEL_CLIENT &&
+				    pother->rx_fd < 0 &&
+				    pother->tx_fd < 0)
+					continue;
+
 				ass_get_client_info(pother, &data.cinfo);
 				error = 0;
 				break;
@@ -1573,6 +1579,7 @@ ass_watchdog_sub(struct ass_client *pass)
 {
 	int fd;
 	bool any = false;
+	struct ass_port *port;
 
 	if (pass->rx_name == NULL) {
 		/* do nothing */
@@ -1588,6 +1595,8 @@ ass_watchdog_sub(struct ass_client *pass)
 			DPRINTF("Close read\n");
 			close(pass->rx_fd);
 			pass->rx_fd = -1;
+			TAILQ_FOREACH(port, &pass->head, entry)
+				ass_clear_subscriber_list(pass, port, &port->c_src, true);
 		}
 	}
 
@@ -1605,6 +1614,8 @@ ass_watchdog_sub(struct ass_client *pass)
 			DPRINTF("Close write\n");
 			close(pass->tx_fd);
 			pass->tx_fd = -1;
+			TAILQ_FOREACH(port, &pass->head, entry)
+				ass_clear_subscriber_list(pass, port, &port->c_dst, false);
 		}
 	}
 
