@@ -1,7 +1,7 @@
 #
 # $FreeBSD: $
 #
-# Copyright (c) 2019-2021 Hans Petter Selasky. All rights reserved.
+# Copyright (c) 2019-2022 Hans Petter Selasky. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -46,7 +46,8 @@ CFLAGS+=	-g
 
 LDFLAGS+=	-lcuse
 
-SRCS=		alsa-seq-server.c
+SRCS=		autodetect.c \
+		alsa-seq-server.c
 
 .if defined(HAVE_MAN)
 MAN=		alsa-seq-server.8

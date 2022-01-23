@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2019 Hans Petter Selasky <hselasky@FreeBSD.org>
+ * Copyright (c) 2019-2022 Hans Petter Selasky <hselasky@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -37,114 +37,22 @@
  *			   Jaroslav Kysela <perex@perex.cz>
  */
 
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <string.h>
 #include <signal.h>
 #include <assert.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <err.h>
 #include <pwd.h>
 #include <poll.h>
 #include <limits.h>
 #include <sysexits.h>
-#include <sys/errno.h>
-#include <sys/queue.h>
-#include <sys/types.h>
-#include <sys/sysctl.h>
 
 #include <cuse.h>
 
-#include "asequencer.h"
+#include "alsa-seq-server.h"
 
-#define	ASS_MAX_PORTS 16
-#define	ASS_MAX_CLIENTS 32
-#define	ASS_MAX_QUEUES 0
+#include <sys/errno.h>
+#include <sys/sysctl.h>
 
-struct ass_parse {
-	uint8_t *temp_cmd;
-	uint8_t	temp_0[4];
-	uint8_t	temp_1[4];
-	uint8_t	state;
-#define	ASS_ST_UNKNOWN	 0		/* scan for command */
-#define	ASS_ST_1PARAM	 1
-#define	ASS_ST_2PARAM_1	 2
-#define	ASS_ST_2PARAM_2	 3
-#define	ASS_ST_SYSEX_0	 4
-#define	ASS_ST_SYSEX_1	 5
-#define	ASS_ST_SYSEX_2	 6
-};
-
-#define	ASS_FIFO_MAX 1024
-
-struct ass_fifo {
-	unsigned int producer;
-	unsigned int consumer;
-	struct snd_seq_event data[ASS_FIFO_MAX];
-};
-
-struct ass_subscribers {
-	struct snd_seq_port_subscribe info;
-	TAILQ_ENTRY(ass_subscribers) src_entry;
-	TAILQ_ENTRY(ass_subscribers) dst_entry;
-	unsigned int ref_count;
-};
-
-struct ass_port_subs_info {
-	TAILQ_HEAD(, ass_subscribers) head;
-	unsigned int count;
-	unsigned int exclusive:1;
-};
-
-struct ass_port {
-	struct snd_seq_addr addr;
-	char	name[64];
-	TAILQ_ENTRY(ass_port) entry;
-
-	struct ass_port_subs_info c_src;
-	struct ass_port_subs_info c_dst;
-
-	unsigned int timestamping:1;
-	unsigned int time_real:1;
-	int	time_queue;
-
-	unsigned int capability;
-	unsigned int type;
-
-	int	midi_channels;
-	int	midi_voices;
-	int	synth_voices;
-};
-
-struct ass_client {
-	TAILQ_ENTRY(ass_client) entry;
-	TAILQ_HEAD(, ass_port) head;
-	snd_seq_client_type_t type;
-	unsigned int accept_input:1;
-	unsigned int accept_output:1;
-	unsigned int rx_busy:1;
-	unsigned int tx_busy:1;
-	char	name[64];
-	int	number;
-	unsigned int filter;
-	uint8_t	event_filter[256 / 8];
-	int	event_lost;
-	int	num_ports;
-	int	convert32;
-	struct ass_fifo rx_fifo;
-	struct ass_parse parse;
-	const char *rx_name;
-	const char *tx_name;
-	int	rx_fd;
-	int	tx_fd;
-};
-
-static TAILQ_HEAD(, ass_client) ass_client_head =
-  TAILQ_HEAD_INITIALIZER(ass_client_head);
 static pthread_mutex_t ass_mtx;
 static pthread_cond_t ass_cv;
 static uid_t uid;
@@ -152,6 +60,9 @@ static gid_t gid;
 static mode_t mode = 0666;
 static const char *dname = "snd/seq";
 static bool background;
+
+ass_client_head_t ass_client_head =
+    TAILQ_HEAD_INITIALIZER(ass_client_head);
 
 static const uint8_t ass_cmd_to_len[16] = {
 	[0x0] = 0,			/* reserved */
@@ -185,14 +96,14 @@ ass_init(void)
 	pthread_cond_init(&ass_cv, NULL);
 }
 
-static void
-ass_lock()
+void
+ass_lock(void)
 {
 	pthread_mutex_lock(&ass_mtx);
 }
 
-static void
-ass_unlock()
+void
+ass_unlock(void)
 {
 	pthread_mutex_unlock(&ass_mtx);
 }
@@ -674,7 +585,7 @@ ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 	}
 	retval = 0;
 
-	while (len >= sizeof(temp)) {
+	while (len >= (int)sizeof(temp)) {
 		int delta;
 
 		if (ass_fifo_pull(&pass->rx_fifo, &temp[0]) == false) {
@@ -745,7 +656,7 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 		ass_unlock();
 		return (CUSE_ERR_BUSY);
 	}
-	while (len >= sizeof(temp)) {
+	while (len >= (int)sizeof(temp)) {
 		int delta;
 
 		pass->tx_busy = 1;
@@ -791,7 +702,7 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 				/* split up and deliver the event(s) */
 				for (off = 0; off < (int)(delta - sizeof(temp)); off += sizeof(temp.data.ext.ptr)) {
 					int x = delta - sizeof(temp) - off;
-					if (x > sizeof(temp.data.ext.ptr))
+					if (x > (int)sizeof(temp.data.ext.ptr))
 						x = sizeof(temp.data.ext.ptr);
 					temp.data.ext.len = x;
 					memcpy(&temp.data.ext.ptr, var_data + off, x);
@@ -1601,8 +1512,8 @@ ass_poll(struct cuse_dev *pdev, int fflags, int events)
 	return (retval);
 }
 
-static struct ass_client *
-ass_create_kernel_client(unsigned int caps)
+struct ass_client *
+ass_create_kernel_client(unsigned int caps, char *rx_name, char *tx_name)
 {
 	struct ass_client *pass;
 	struct ass_client *pother;
@@ -1635,6 +1546,8 @@ ass_create_kernel_client(unsigned int caps)
 	TAILQ_INIT(&pass->head);
 	pass->rx_fd = -1;
 	pass->tx_fd = -1;
+	pass->rx_name = rx_name;
+	pass->tx_name = tx_name;
 	snprintf(pass->name, sizeof(pass->name), "Client-%d", pass->number);
 	port = ass_create_port(pass, 0);
 	if (port == NULL) {
@@ -1822,10 +1735,11 @@ ass_midi_process(void *arg)
 }
 
 static void
-usage()
+usage(void)
 {
 	fprintf(stderr,
 	    "alsa-seq-server - RAW USB/socket to ALSA SEQ server\n"
+	    "	-F /dev/umidi (install capture and playback filter)\n"
 	    "	-d /dev/umidi0.0 (add capture and playback device)\n"
 	    "	-C /dev/umidi0.0 (add capture only device)\n"
 	    "	-P /dev/umidi0.0 (add playback only device)\n"
@@ -1870,6 +1784,8 @@ ass_create_cuse_threads(void)
 		pthread_create(&td, NULL, &ass_cuse_process, NULL);
 
 	pthread_create(&td, NULL, &ass_midi_process, NULL);
+
+	autodetect_init();
 }
 
 static const struct cuse_methods ass_methods = {
@@ -1887,8 +1803,11 @@ main(int argc, char **argv)
 	struct ass_client *pass;
 	int c;
 
-	while ((c = getopt(argc, argv, "d:C:P:U:G:m:s:Bh")) != -1) {
+	while ((c = getopt(argc, argv, "d:F:C:P:U:G:m:s:Bh")) != -1) {
 		switch (c) {
+		case 'F':
+			autodetect_filter_add(optarg);
+			break;
 		case 'B':
 			background = true;
 			break;
@@ -1900,29 +1819,28 @@ main(int argc, char **argv)
 			    SNDRV_SEQ_PORT_CAP_SYNC_WRITE |
 			    SNDRV_SEQ_PORT_CAP_DUPLEX |
 			    SNDRV_SEQ_PORT_CAP_SUBS_READ |
-			    SNDRV_SEQ_PORT_CAP_SUBS_WRITE);
+			    SNDRV_SEQ_PORT_CAP_SUBS_WRITE,
+			    optarg, optarg);
 			if (pass == NULL)
 				usage();
-			pass->rx_name = optarg;
-			pass->tx_name = optarg;
 			break;
 		case 'P':
 			pass = ass_create_kernel_client(
 			    SNDRV_SEQ_PORT_CAP_WRITE |
 			    SNDRV_SEQ_PORT_CAP_SYNC_WRITE |
-			    SNDRV_SEQ_PORT_CAP_SUBS_WRITE);
+			    SNDRV_SEQ_PORT_CAP_SUBS_WRITE,
+			    NULL, optarg);
 			if (pass == NULL)
 				usage();
-			pass->tx_name = optarg;
 			break;
 		case 'C':
 			pass = ass_create_kernel_client(
 			    SNDRV_SEQ_PORT_CAP_READ |
 			    SNDRV_SEQ_PORT_CAP_SYNC_READ |
-			    SNDRV_SEQ_PORT_CAP_SUBS_READ);
+			    SNDRV_SEQ_PORT_CAP_SUBS_READ,
+			    optarg, NULL);
 			if (pass == NULL)
 				usage();
-			pass->rx_name = optarg;
 			break;
 		case 'U':
 			ass_uid(optarg);

@@ -1,5 +1,5 @@
 .\"
-.\" Copyright (c) 2019 Hans Petter Selasky <hselasky@freebsd.org>
+.\" Copyright (c) 2019-2022 Hans Petter Selasky <hselasky@freebsd.org>
 .\"
 .\" All rights reserved.
 .\"
@@ -25,13 +25,14 @@
 .\" SUCH DAMAGE.
 .\"
 .\"
-.Dd September 28, 2019
+.Dd January 23, 2022
 .Dt ALSA-SEQ-SERVER 8
 .Sh NAME
 .Nm alsa-seq-server
 .Nd daemon that converts one or more raw MIDI device(s) into an ALSA sequencer server.
 .Sh SYNOPSIS
 .Nm
+.Op Fl F Ar <filter>
 .Op Fl d Ar <device_name>
 .Op Fl C Ar <capture_device_name>
 .Op Fl P Ar <playback_device_name>
@@ -52,6 +53,9 @@ The following options are available:
 .Bl -tag -width indent
 .It Fl B
 Run the client in background mode.
+.It Fl F
+Specify a simple device name filter, which is used to match character device entries in /dev/ .
+As new devices appear, they are automatically made visible to other ALSA MIDI clients.
 .It Fl d
 Specify the device name of the USB device to use, for example /dev/umidi0.0 .
 This option can be repeated to specify more devices.
@@ -81,6 +85,9 @@ Print help text showing available options.
 .Bd -literal -offset indent
 # Start ALSA sequencer server in background mode
 alsa-seq-server -d /dev/umidi0.0 -B
+
+# Start ALSA sequencer server in background mode for all umidi<XXX> devices
+alsa-seq-server -F umidi -B
 
 # List all available ALSA sequencer ports
 aconnect -l
