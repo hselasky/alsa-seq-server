@@ -370,6 +370,7 @@ static bool
 ass_send_synth_event(struct snd_seq_event *ev, int fd)
 {
 	uint8_t buffer[3] = {};
+	int len;
 
 	switch (ev->type) {
 	case SNDRV_SEQ_EVENT_NOTEON:
@@ -395,6 +396,36 @@ ass_send_synth_event(struct snd_seq_event *ev, int fd)
 		break;
 	case SNDRV_SEQ_EVENT_SYSEX:
 		return (write(fd, &ev->data.ext.ptr, ev->data.ext.len) == ev->data.ext.len);
+	case SNDRV_SEQ_EVENT_QFRAME:
+		buffer[0] |= 0xF1;
+		break;
+	case SNDRV_SEQ_EVENT_SONGPOS:
+		buffer[0] |= 0xF2;
+		break;
+	case SNDRV_SEQ_EVENT_SONGSEL:
+		buffer[0] |= 0xF3;
+		break;
+	case SNDRV_SEQ_EVENT_TUNE_REQUEST:
+		buffer[0] |= 0xF6;
+		break;
+	case SNDRV_SEQ_EVENT_CLOCK:
+		buffer[0] |= 0xF8;
+		break;
+	case SNDRV_SEQ_EVENT_START:
+		buffer[0] |= 0xFA;
+		break;
+	case SNDRV_SEQ_EVENT_CONTINUE:
+		buffer[0] |= 0xFB;
+		break;
+	case SNDRV_SEQ_EVENT_STOP:
+		buffer[0] |= 0xFC;
+		break;
+	case SNDRV_SEQ_EVENT_SENSING:
+		buffer[0] |= 0xFE;
+		break;
+	case SNDRV_SEQ_EVENT_RESET:
+		buffer[0] |= 0xFF;
+		break;
 	default:
 		return (true);
 	}
@@ -406,26 +437,41 @@ ass_send_synth_event(struct snd_seq_event *ev, int fd)
 		buffer[0] |= ev->data.note.channel & 0xF;
 		buffer[1] |= ev->data.note.note & 0x7F;
 		buffer[2] |= ev->data.note.velocity & 0x7F;
+		len = 3;
 		break;
 	case SNDRV_SEQ_EVENT_CHANPRESS:
 	case SNDRV_SEQ_EVENT_PGMCHANGE:
 		buffer[0] |= ev->data.control.channel & 0xF;
 		buffer[1] |= ev->data.control.value & 0x7F;
+		len = 2;
 		break;
 	case SNDRV_SEQ_EVENT_CONTROLLER:
 		buffer[0] |= ev->data.control.channel & 0xF;
 		buffer[1] |= ev->data.control.param & 0x7F;
 		buffer[2] |= ev->data.control.value & 0x7F;
+		len = 3;
 		break;
 	case SNDRV_SEQ_EVENT_PITCHBEND:
 		buffer[0] |= ev->data.control.channel & 0xF;
 		buffer[1] |= (ev->data.control.value + 8192) & 0x7F;
 		buffer[2] |= ((ev->data.control.value + 8192) >> 7) & 0x7F;
+		len = 3;
+		break;
+	case SNDRV_SEQ_EVENT_QFRAME:
+	case SNDRV_SEQ_EVENT_SONGSEL:
+		buffer[1] |= ev->data.control.value & 0x7F;
+		len = 2;
+		break;
+	case SNDRV_SEQ_EVENT_SONGPOS:
+		buffer[1] |= (ev->data.control.value & 0x7F);
+		buffer[2] |= ((ev->data.control.value >> 7) & 0x7F);
+		len = 3;
 		break;
 	default:
+		len = 1;
 		break;
 	}
-	return (write(fd, buffer, 3) == 3);
+	return (write(fd, buffer, len) == len);
 }
 
 static bool
@@ -473,6 +519,42 @@ ass_receive_synth_event(struct snd_seq_event *ev,
 		case 0xE:
 			ev->type = SNDRV_SEQ_EVENT_PITCHBEND;
 			break;
+		case 0xF:
+			switch (parse->temp_cmd[1] & 0x0F) {
+			case 0x1:
+				ev->type = SNDRV_SEQ_EVENT_QFRAME;
+				break;
+			case 0x2:
+				ev->type = SNDRV_SEQ_EVENT_SONGPOS;
+				break;
+			case 0x3:
+				ev->type = SNDRV_SEQ_EVENT_SONGSEL;
+				break;
+			case 0x6:
+				ev->type = SNDRV_SEQ_EVENT_TUNE_REQUEST;
+				break;
+			case 0x8:
+				ev->type = SNDRV_SEQ_EVENT_CLOCK;
+				break;
+			case 0xA:
+				ev->type = SNDRV_SEQ_EVENT_START;
+				break;
+			case 0xB:
+				ev->type = SNDRV_SEQ_EVENT_CONTINUE;
+				break;
+			case 0xC:
+				ev->type = SNDRV_SEQ_EVENT_STOP;
+				break;
+			case 0xE:
+				ev->type = SNDRV_SEQ_EVENT_SENSING;
+				break;
+			case 0xF:
+				ev->type = SNDRV_SEQ_EVENT_RESET;
+				break;
+			default:
+				continue;
+			}
+			break;
 		default:
 			continue;
 		}
@@ -501,6 +583,16 @@ ass_receive_synth_event(struct snd_seq_event *ev,
 			    (parse->temp_cmd[2] & 0x7F) |
 			    ((parse->temp_cmd[3] & 0x7F) << 7);
 			ev->data.control.value -= 8192;
+			break;
+		case SNDRV_SEQ_EVENT_QFRAME:
+		case SNDRV_SEQ_EVENT_SONGSEL:
+			ev->data.control.value = parse->temp_cmd[1] & 0x7F;
+			break;
+		case SNDRV_SEQ_EVENT_SONGPOS:
+			ev->data.control.value = (parse->temp_cmd[1] & 0x7F) |
+			    ((parse->temp_cmd[2] & 0x7F) << 7);
+			break;
+		default:
 			break;
 		}
 		return (true);
