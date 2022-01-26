@@ -1719,6 +1719,7 @@ ass_watchdog_sub(struct ass_client *pass)
 			pass->rx_fd = fd;
 			fcntl(pass->rx_fd, F_SETFL, (int)O_NONBLOCK);
 			any = true;
+			ass_wakeup();
 		}
 	} else {
 		if (fcntl(pass->rx_fd, F_SETFL, (int)O_NONBLOCK) == -1) {
@@ -1738,6 +1739,7 @@ ass_watchdog_sub(struct ass_client *pass)
 			pass->tx_fd = fd;
 			fcntl(pass->tx_fd, F_SETFL, (int)0);
 			any = true;
+			ass_wakeup();
 		}
 	} else {
 		if (fcntl(pass->tx_fd, F_SETFL, (int)0) == -1) {
