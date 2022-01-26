@@ -990,6 +990,14 @@ ass_subscribe_port(struct ass_client *client,
     struct snd_seq_port_subscribe *info,
     int send_ack)
 {
+	/* check if kernel device is ready before allowing subscribe */
+	if (client->type == KERNEL_CLIENT) {
+		if (grp == &port->c_src && client->rx_fd < 0)
+			return (CUSE_ERR_INVALID);
+		if (grp == &port->c_dst && client->tx_fd < 0)
+			return (CUSE_ERR_INVALID);
+	}
+
 	grp->count++;
 
 	if (send_ack && client->type == USER_CLIENT) {
