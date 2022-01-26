@@ -963,6 +963,26 @@ ass_check_subscription_permission(struct ass_client *client,
 	return (0);
 }
 
+static void
+ass_client_notify_subscription(struct ass_client *client,
+    int dst_client, int dst_port,
+    struct snd_seq_port_subscribe *info, int evtype)
+{
+	struct snd_seq_event event;
+
+	memset(&event, 0, sizeof(event));
+	event.type = evtype;
+	event.flags = SNDRV_SEQ_EVENT_LENGTH_FIXED;
+	event.source.client = -1;
+	event.source.port = -1;
+	event.dest.client = dst_client;
+	event.dest.port = dst_port;
+	event.data.connect.dest = info->dest;
+	event.data.connect.sender = info->sender;
+
+	ass_deliver_single_event(client, &event, 0);
+}
+
 static int
 ass_subscribe_port(struct ass_client *client,
     struct ass_port *port,
@@ -971,6 +991,11 @@ ass_subscribe_port(struct ass_client *client,
     int send_ack)
 {
 	grp->count++;
+
+	if (send_ack && client->type == USER_CLIENT) {
+		ass_client_notify_subscription(client, port->addr.client, port->addr.port,
+		    info, SNDRV_SEQ_EVENT_PORT_SUBSCRIBED);
+	}
 	return (0);
 }
 
@@ -985,6 +1010,11 @@ ass_unsubscribe_port(struct ass_client *client,
 	if (grp->count == 0)
 		return (CUSE_ERR_INVALID);
 	grp->count--;
+
+	if (send_ack && client->type == USER_CLIENT) {
+		ass_client_notify_subscription(client, port->addr.client, port->addr.port,
+		    info, SNDRV_SEQ_EVENT_PORT_UNSUBSCRIBED);
+	}
 	return (0);
 }
 
