@@ -52,6 +52,7 @@
 
 #include <sys/errno.h>
 #include <sys/sysctl.h>
+#include <sys/rtprio.h>
 
 static pthread_mutex_t ass_mtx;
 static pthread_cond_t ass_cv;
@@ -1892,6 +1893,7 @@ usage(void)
 	    "	-G <groupname> (set this groupname for sequencer device, default is 0)\n"
 	    "	-m <mode> (set this permission mode for sequencer device, default is 0666)\n"
 	    "	-s <devicename> (set sequencer device name, default is snd/seq)\n"
+	    "	-i <rtprio> (set RealTime priority)\n"
 	    "	-B (run in background)\n"
 	    "	-h (show help)\n");
 	exit(0);
@@ -1946,15 +1948,23 @@ int
 main(int argc, char **argv)
 {
 	struct ass_client *pass;
+	struct rtprio rtp;
 	int c;
 
-	while ((c = getopt(argc, argv, "d:F:C:P:U:G:m:s:Bh")) != -1) {
+	while ((c = getopt(argc, argv, "d:i:F:C:P:U:G:m:s:Bh")) != -1) {
 		switch (c) {
 		case 'F':
 			autodetect_filter_add(optarg);
 			break;
 		case 'B':
 			background = true;
+			break;
+		case 'i':
+			memset(&rtp, 0, sizeof(rtp));
+			rtp.type = RTP_PRIO_REALTIME;
+			rtp.prio = atoi(optarg);
+			if (rtprio(RTP_SET, getpid(), &rtp) != 0)
+				printf("Cannot set realtime priority\n");
 			break;
 		case 'd':
 			pass = ass_create_kernel_client(
