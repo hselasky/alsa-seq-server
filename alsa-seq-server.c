@@ -1753,7 +1753,7 @@ ass_watchdog_sub(struct ass_client *pass)
 
 	if (any) {
 		int unit = -1;
-		int subunit = -1;
+		int subunit = 0;
 		const char *pname = NULL;
 
 		if (pass->rx_name != NULL) {
@@ -1801,16 +1801,17 @@ ass_watchdog_sub(struct ass_client *pass)
 					pass->name[16] = 0;
 					size = 16;
 				}
-				/* store port number */
-				port = TAILQ_FIRST(&pass->head);
-				if (port != NULL)
-					snprintf(port->name, sizeof(port->name), "port-%d", subunit);
 			} else {
 				strlcpy(pass->name, pname, sizeof(pass->name));
 			}
 		} else {
 			strlcpy(pass->name, pname, sizeof(pass->name));
 		}
+
+		/* store port number */
+		port = TAILQ_FIRST(&pass->head);
+		if (port != NULL)
+			snprintf(port->name, sizeof(port->name), "port-%d", subunit);
 	}
 }
 
