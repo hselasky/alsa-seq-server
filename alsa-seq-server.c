@@ -1801,9 +1801,10 @@ ass_watchdog_sub(struct ass_client *pass)
 					pass->name[16] = 0;
 					size = 16;
 				}
-				/* append port number */
-				snprintf(pass->name + size, sizeof(pass->name) - size,
-				    " #%d", subunit);
+				/* store port number */
+				port = TAILQ_FIRST(&pass->head);
+				if (port != NULL)
+					snprintf(port->name, sizeof(port->name), "port-%d", subunit);
 			} else {
 				strlcpy(pass->name, pname, sizeof(pass->name));
 			}
