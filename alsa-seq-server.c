@@ -1857,18 +1857,18 @@ ass_midi_process(void *arg)
 			ass_wait();
 			continue;
 		}
+
 		ass_unlock();
-
-		poll(pfd, n, -1);
-
+		poll(pfd, n, 1000);
 		ass_lock();
+
 		n = 0;
 		TAILQ_FOREACH(pass, &ass_client_head, entry) {
 			if (pass->type != KERNEL_CLIENT ||
 			    pass->rx_fd < 0 ||
 			    n == ASS_MAX_CLIENTS)
 				continue;
-			if (pfd[n].revents & POLLIN) {
+			if ((pfd[n].revents & POLLIN) != 0 && (pfd[n].fd == pass->rx_fd)) {
 				while (ass_receive_synth_event(&temp, &pass->parse, pass->rx_fd)) {
 					temp.source.client = pass->number;
 					ass_deliver_to_subscribers(pass, &temp);
