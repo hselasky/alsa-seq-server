@@ -27,16 +27,28 @@
 #ifndef _ALSA_SEQ_SERVER_H_
 #define	_ALSA_SEQ_SERVER_H_
 
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
+#include <assert.h>
+#include <dirent.h>
+#include <err.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <poll.h>
 #include <pthread.h>
+#include <pwd.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sysexits.h>
+#include <unistd.h>
 
 #include <sys/queue.h>
 #include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/rtprio.h>
+#include <sys/errno.h>
 
 #include "asequencer.h"
 
@@ -44,6 +56,12 @@
 #define	ASS_MAX_CLIENTS 32
 #define	ASS_MAX_QUEUES 0
 #define	ASS_MAX_FILTER 256
+
+#ifdef HAVE_DEBUG
+#define	DPRINTF(fmt, ...) printf("%s:%d: " fmt, __FUNCTION__, __LINE__,## __VA_ARGS__)
+#else
+#define	DPRINTF(fmt, ...) do { } while (0)
+#endif
 
 struct ass_parse {
 	uint8_t *temp_cmd;
@@ -125,20 +143,19 @@ struct ass_client {
 	int	convert32;
 	struct ass_fifo rx_fifo;
 	struct ass_parse parse;
-	char *rx_name;
-	char *tx_name;
 	int	rx_fd;
 	int	tx_fd;
 };
 
-extern ass_client_head_t ass_client_head;
-extern void ass_lock(void);
-extern void ass_unlock(void);
-extern struct ass_client *ass_create_kernel_client(unsigned int, char *, char *);
+/* Kernel support */
+
+extern struct ass_client *ass_create_kernel_client(int, int, const char *, int);
+extern void ass_free_client(struct ass_client *);
 
 /* Autodetect support */
 
-extern void autodetect_init(void);
+extern int new_device(char *, char *);
+extern void *autodetect_watchdog(void *);
 extern void autodetect_filter_add(const char *);
 
 #endif		/* _ALSA_SEQ_SERVER_H_ */

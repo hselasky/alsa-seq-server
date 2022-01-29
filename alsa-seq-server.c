@@ -37,22 +37,9 @@
  *			   Jaroslav Kysela <perex@perex.cz>
  */
 
-#include <signal.h>
-#include <assert.h>
-#include <fcntl.h>
-#include <err.h>
-#include <pwd.h>
-#include <poll.h>
-#include <limits.h>
-#include <sysexits.h>
-
-#include <cuse.h>
-
 #include "alsa-seq-server.h"
 
-#include <sys/errno.h>
-#include <sys/sysctl.h>
-#include <sys/rtprio.h>
+#include <cuse.h>
 
 static pthread_mutex_t ass_mtx;
 static pthread_cond_t ass_cv;
@@ -61,8 +48,7 @@ static gid_t gid;
 static mode_t mode = 0666;
 static const char *dname = "snd/seq";
 static bool background;
-
-ass_client_head_t ass_client_head =
+static ass_client_head_t ass_client_head =
     TAILQ_HEAD_INITIALIZER(ass_client_head);
 
 static const uint8_t ass_cmd_to_len[16] = {
@@ -84,12 +70,6 @@ static const uint8_t ass_cmd_to_len[16] = {
 	[0xF] = 1,			/* bytes */
 };
 
-#ifdef HAVE_DEBUG
-#define	DPRINTF(fmt, ...) printf("%s:%d: " fmt, __FUNCTION__, __LINE__,## __VA_ARGS__)
-#else
-#define	DPRINTF(fmt, ...) do { } while (0)
-#endif
-
 static void
 ass_init(void)
 {
@@ -97,13 +77,13 @@ ass_init(void)
 	pthread_cond_init(&ass_cv, NULL);
 }
 
-void
+static void
 ass_lock(void)
 {
 	pthread_mutex_lock(&ass_mtx);
 }
 
-void
+static void
 ass_unlock(void)
 {
 	pthread_mutex_unlock(&ass_mtx);
@@ -991,14 +971,6 @@ ass_subscribe_port(struct ass_client *client,
     struct snd_seq_port_subscribe *info,
     int send_ack)
 {
-	/* check if kernel device is ready before allowing subscribe */
-	if (client->type == KERNEL_CLIENT) {
-		if (grp == &port->c_src && client->rx_fd < 0)
-			return (CUSE_ERR_INVALID);
-		if (grp == &port->c_dst && client->tx_fd < 0)
-			return (CUSE_ERR_INVALID);
-	}
-
 	grp->count++;
 
 	if (send_ack && client->type == USER_CLIENT) {
@@ -1307,12 +1279,6 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 				data.cinfo.client++;
 			pother = ass_client_by_number(data.cinfo.client);
 			if (pother != NULL) {
-				/* Skip listing disconnected clients. */
-				if (pother->type == KERNEL_CLIENT &&
-				    pother->rx_fd < 0 &&
-				    pother->tx_fd < 0)
-					continue;
-
 				ass_get_client_info(pother, &data.cinfo);
 				error = 0;
 				break;
@@ -1604,20 +1570,12 @@ static int
 ass_close(struct cuse_dev *pdev, int fflags)
 {
 	struct ass_client *pass;
-	struct ass_port *port;
 
 	pass = cuse_dev_get_per_file_handle(pdev);
 	if (pass == NULL)
 		return (CUSE_ERR_INVALID);
 
-	ass_lock();
-	while ((port = TAILQ_FIRST(&pass->head)))
-		ass_delete_port(pass, port);
-	TAILQ_REMOVE(&ass_client_head, pass, entry);
-	ass_unlock();
-
-	free(pass);
-
+	ass_free_client(pass);
 	return (0);
 }
 
@@ -1650,11 +1608,12 @@ ass_poll(struct cuse_dev *pdev, int fflags, int events)
 }
 
 struct ass_client *
-ass_create_kernel_client(unsigned int caps, char *rx_name, char *tx_name)
+ass_create_kernel_client(int rx_fd, int tx_fd, const char *name, int subunit)
 {
 	struct ass_client *pass;
 	struct ass_client *pother;
 	struct ass_port *port;
+	unsigned caps;
 	bool loop;
 
 	pass = malloc(sizeof(*pass));
@@ -1662,6 +1621,21 @@ ass_create_kernel_client(unsigned int caps, char *rx_name, char *tx_name)
 		return (NULL);
 
 	memset(pass, 0, sizeof(*pass));
+
+	caps = 0;
+	if (rx_fd > -1) {
+		caps |= SNDRV_SEQ_PORT_CAP_READ |
+			SNDRV_SEQ_PORT_CAP_SYNC_READ |
+			SNDRV_SEQ_PORT_CAP_SUBS_READ;
+	}
+	if (tx_fd > -1) {
+		caps |= SNDRV_SEQ_PORT_CAP_WRITE |
+			SNDRV_SEQ_PORT_CAP_SYNC_WRITE |
+			SNDRV_SEQ_PORT_CAP_SUBS_WRITE;
+	}
+	if (rx_fd > -1 && tx_fd > -1) {
+		caps |= SNDRV_SEQ_PORT_CAP_DUPLEX;
+	}
 
 	ass_lock();
 	do {
@@ -1681,11 +1655,9 @@ ass_create_kernel_client(unsigned int caps, char *rx_name, char *tx_name)
 	}
 	pass->type = KERNEL_CLIENT;
 	TAILQ_INIT(&pass->head);
-	pass->rx_fd = -1;
-	pass->tx_fd = -1;
-	pass->rx_name = rx_name;
-	pass->tx_name = tx_name;
-	snprintf(pass->name, sizeof(pass->name), "Client-%d", pass->number);
+	pass->rx_fd = rx_fd;
+	pass->tx_fd = tx_fd;
+	strlcpy(pass->name, name, sizeof(pass->name));
 	port = ass_create_port(pass, 0);
 	if (port == NULL) {
 		ass_unlock();
@@ -1699,137 +1671,25 @@ ass_create_kernel_client(unsigned int caps, char *rx_name, char *tx_name)
 	port->capability = caps;
 	port->type = SNDRV_SEQ_PORT_TYPE_MIDI_GENERIC;
 	port->midi_channels = 16;
+	snprintf(port->name, sizeof(port->name), "port-%d", subunit);
 	TAILQ_INSERT_TAIL(&ass_client_head, pass, entry);
 	ass_wakeup();
 	ass_unlock();
 	return (pass);
 }
 
-static void
-ass_watchdog_sub(struct ass_client *pass)
+void
+ass_free_client(struct ass_client *pass)
 {
-	int fd;
-	bool any = false;
 	struct ass_port *port;
 
-	if (pass->rx_name == NULL) {
-		/* do nothing */
-	} else if (pass->rx_fd < 0) {
-		fd = open(pass->rx_name, O_RDONLY | O_NONBLOCK);
-		if (fd > -1) {
-			pass->rx_fd = fd;
-			fcntl(pass->rx_fd, F_SETFL, (int)O_NONBLOCK);
-			any = true;
-			ass_wakeup();
-		}
-	} else {
-		if (fcntl(pass->rx_fd, F_SETFL, (int)O_NONBLOCK) == -1) {
-			DPRINTF("Close read\n");
-			close(pass->rx_fd);
-			pass->rx_fd = -1;
-			TAILQ_FOREACH(port, &pass->head, entry)
-				ass_clear_subscriber_list(pass, port, &port->c_src, true);
-		}
-	}
+	ass_lock();
+	while ((port = TAILQ_FIRST(&pass->head)))
+		ass_delete_port(pass, port);
+	TAILQ_REMOVE(&ass_client_head, pass, entry);
+	ass_unlock();
 
-	if (pass->tx_name == NULL) {
-		/* do nothing */
-	} else if (pass->tx_fd < 0) {
-		fd = open(pass->tx_name, O_WRONLY | O_NONBLOCK);
-		if (fd > -1) {
-			pass->tx_fd = fd;
-			fcntl(pass->tx_fd, F_SETFL, (int)0);
-			any = true;
-			ass_wakeup();
-		}
-	} else {
-		if (fcntl(pass->tx_fd, F_SETFL, (int)0) == -1) {
-			DPRINTF("Close write\n");
-			close(pass->tx_fd);
-			pass->tx_fd = -1;
-			TAILQ_FOREACH(port, &pass->head, entry)
-				ass_clear_subscriber_list(pass, port, &port->c_dst, false);
-		}
-	}
-
-	if (any) {
-		int unit = -1;
-		int subunit = 0;
-		const char *pname = NULL;
-
-		if (pass->rx_name != NULL) {
-			if (strncmp(pass->rx_name, "/dev/", 5) == 0) {
-				pname = pass->rx_name + 5;
-				sscanf(pass->rx_name, "/dev/umidi%d.%d", &unit, &subunit);
-			} else {
-				pname = pass->rx_name;
-			}
-		} else {
-			if (strncmp(pass->tx_name, "/dev/", 5) == 0) {
-				pname = pass->tx_name + 5;
-				sscanf(pass->tx_name, "/dev/umidi%d.%d", &unit, &subunit);
-			} else {
-				pname = pass->tx_name;
-			}
-		}
-
-		if (unit > -1) {
-			size_t size = sizeof(pass->name);
-
-			/* create sysctl name */
-			snprintf(pass->name, sizeof(pass->name), "dev.uaudio.%d.%%desc", unit);
-
-			/* lookup sysctl */
-			if (sysctlbyname(pass->name, pass->name, &size, NULL, 0) == 0 ||
-			    (errno == ENOMEM)) {
-				char *ptr;
-
-				/* check string length */
-				if (size > sizeof(pass->name) - 1)
-					size = sizeof(pass->name) - 1;
-
-				/* zero terminate */
-				pass->name[size] = 0;
-
-				/* split */
-				ptr = strchr(pass->name, ',');
-				if (ptr != NULL) {
-					size = ptr - pass->name;
-					*ptr = 0;
-				}
-				/* limit the string length */
-				if (strlen(pass->name) > 16) {
-					pass->name[16] = 0;
-					size = 16;
-				}
-			} else {
-				strlcpy(pass->name, pname, sizeof(pass->name));
-			}
-		} else {
-			strlcpy(pass->name, pname, sizeof(pass->name));
-		}
-
-		/* store port number */
-		port = TAILQ_FIRST(&pass->head);
-		if (port != NULL)
-			snprintf(port->name, sizeof(port->name), "port-%d", subunit);
-	}
-}
-
-static void *
-ass_watchdog(void *arg)
-{
-	struct ass_client *pass;
-
-	while (1) {
-		ass_lock();
-		TAILQ_FOREACH(pass, &ass_client_head, entry) {
-			if (pass->type == KERNEL_CLIENT)
-				ass_watchdog_sub(pass);
-		}
-		ass_unlock();
-		usleep(1000000);
-	}
+	free(pass);
 }
 
 static void *
@@ -1931,8 +1791,6 @@ ass_create_cuse_threads(void)
 		pthread_create(&td, NULL, &ass_cuse_process, NULL);
 
 	pthread_create(&td, NULL, &ass_midi_process, NULL);
-
-	autodetect_init();
 }
 
 static const struct cuse_methods ass_methods = {
@@ -1947,7 +1805,6 @@ static const struct cuse_methods ass_methods = {
 int
 main(int argc, char **argv)
 {
-	struct ass_client *pass;
 	struct rtprio rtp;
 	int c;
 
@@ -1967,34 +1824,15 @@ main(int argc, char **argv)
 				printf("Cannot set realtime priority\n");
 			break;
 		case 'd':
-			pass = ass_create_kernel_client(
-			    SNDRV_SEQ_PORT_CAP_WRITE |
-			    SNDRV_SEQ_PORT_CAP_READ |
-			    SNDRV_SEQ_PORT_CAP_SYNC_READ |
-			    SNDRV_SEQ_PORT_CAP_SYNC_WRITE |
-			    SNDRV_SEQ_PORT_CAP_DUPLEX |
-			    SNDRV_SEQ_PORT_CAP_SUBS_READ |
-			    SNDRV_SEQ_PORT_CAP_SUBS_WRITE,
-			    optarg, optarg);
-			if (pass == NULL)
+			if (new_device(optarg, optarg))
 				usage();
 			break;
 		case 'P':
-			pass = ass_create_kernel_client(
-			    SNDRV_SEQ_PORT_CAP_WRITE |
-			    SNDRV_SEQ_PORT_CAP_SYNC_WRITE |
-			    SNDRV_SEQ_PORT_CAP_SUBS_WRITE,
-			    NULL, optarg);
-			if (pass == NULL)
+			if (new_device(NULL, optarg))
 				usage();
 			break;
 		case 'C':
-			pass = ass_create_kernel_client(
-			    SNDRV_SEQ_PORT_CAP_READ |
-			    SNDRV_SEQ_PORT_CAP_SYNC_READ |
-			    SNDRV_SEQ_PORT_CAP_SUBS_READ,
-			    optarg, NULL);
-			if (pass == NULL)
+			if (new_device(optarg, NULL))
 				usage();
 			break;
 		case 'U':
@@ -2032,7 +1870,7 @@ main(int argc, char **argv)
 
 	ass_create_cuse_threads();
 
-	ass_watchdog(NULL);
+	autodetect_watchdog(NULL);
 
 	return (0);
 }

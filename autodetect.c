@@ -24,19 +24,37 @@
  * SUCH DAMAGE.
  */
 
-#include <dirent.h>
-
 #include "alsa-seq-server.h"
 
 struct ass_filter;
 typedef TAILQ_ENTRY(ass_filter) ass_filter_entry_t;
 typedef TAILQ_HEAD(, ass_filter) ass_filter_head_t;
 
-static ass_filter_head_t ass_filter_head = TAILQ_HEAD_INITIALIZER(ass_filter_head);
+static ass_filter_head_t ass_filter_head =
+    TAILQ_HEAD_INITIALIZER(ass_filter_head);
 
 struct ass_filter {
 	ass_filter_entry_t entry;
 	const char *filter;
+};
+
+struct ass_device;
+typedef TAILQ_ENTRY(ass_device) ass_device_entry_t;
+typedef TAILQ_HEAD(, ass_device) ass_device_head_t;
+
+static ass_device_head_t ass_device_head =
+    TAILQ_HEAD_INITIALIZER(ass_device_head);
+
+struct ass_device {
+	ass_device_entry_t entry;
+	struct ass_client *client;
+	char *rx_name;
+	char *tx_name;
+	char name[64];
+	int rx_fd;
+	int tx_fd;
+	int unit;
+	int subunit;
 };
 
 void
@@ -73,11 +91,129 @@ autodetect_find(char **pp, size_t num, bool *pfound, char **name)
 	pfound[name - pp] = true;
 }
 
-static void *
+static void
+device_watchdog(struct ass_device *pd)
+{
+	int fd;
+	bool any = false;
+
+	if (pd->rx_name == NULL) {
+		/* do nothing */
+	} else if (pd->rx_fd < 0) {
+		fd = open(pd->rx_name, O_RDONLY | O_NONBLOCK);
+		if (fd > -1) {
+			pd->rx_fd = fd;
+			fcntl(pd->rx_fd, F_SETFL, (int)O_NONBLOCK);
+			any = true;
+		}
+	} else {
+		if (fcntl(pd->rx_fd, F_SETFL, (int)O_NONBLOCK) == -1) {
+			DPRINTF("Close read\n");
+			close(pd->rx_fd);
+			pd->rx_fd = -1;
+			any = true;
+		}
+	}
+
+	if (pd->tx_name == NULL) {
+		/* do nothing */
+	} else if (pd->tx_fd < 0) {
+		fd = open(pd->tx_name, O_WRONLY | O_NONBLOCK);
+		if (fd > -1) {
+			pd->tx_fd = fd;
+			fcntl(pd->tx_fd, F_SETFL, (int)0);
+			any = true;
+		}
+	} else {
+		if (fcntl(pd->tx_fd, F_SETFL, (int)0) == -1) {
+			DPRINTF("Close write\n");
+			close(pd->tx_fd);
+			pd->tx_fd = -1;
+			any = true;
+		}
+	}
+
+	if (any) {
+		/* free old client, if any */
+		if (pd->client != NULL) {
+			ass_free_client(pd->client);
+			pd->client = NULL;
+		}
+
+		/* check that all devices are present */
+		any = (pd->tx_name == NULL || pd->tx_fd > -1) &&
+		      (pd->rx_name == NULL || pd->rx_fd > -1);
+	}
+
+	if (any) {
+		const char *pname = NULL;
+
+		pd->unit = -1;
+		pd->subunit = 0;
+
+		if (pd->rx_name != NULL) {
+			if (strncmp(pd->rx_name, "/dev/", 5) == 0) {
+				pname = pd->rx_name + 5;
+				sscanf(pd->rx_name, "/dev/umidi%d.%d", &pd->unit, &pd->subunit);
+			} else {
+				pname = pd->rx_name;
+			}
+		} else {
+			if (strncmp(pd->tx_name, "/dev/", 5) == 0) {
+				pname = pd->tx_name + 5;
+				sscanf(pd->tx_name, "/dev/umidi%d.%d", &pd->unit, &pd->subunit);
+			} else {
+				pname = pd->tx_name;
+			}
+		}
+
+		if (pd->unit > -1) {
+			size_t size = sizeof(pd->name);
+
+			/* create sysctl name */
+			snprintf(pd->name, sizeof(pd->name), "dev.uaudio.%d.%%desc", pd->unit);
+
+			/* lookup sysctl */
+			if (sysctlbyname(pd->name, pd->name, &size, NULL, 0) == 0 ||
+			    (errno == ENOMEM)) {
+				char *ptr;
+
+				/* check string length */
+				if (size > sizeof(pd->name) - 1)
+					size = sizeof(pd->name) - 1;
+
+				/* zero terminate */
+				pd->name[size] = 0;
+
+				/* split */
+				ptr = strchr(pd->name, ',');
+				if (ptr != NULL) {
+					size = ptr - pd->name;
+					*ptr = 0;
+				}
+				/* limit the string length */
+				if (strlen(pd->name) > 16) {
+					pd->name[16] = 0;
+					size = 16;
+				}
+			} else {
+				strlcpy(pd->name, pname, sizeof(pd->name));
+			}
+		} else {
+			strlcpy(pd->name, pname, sizeof(pd->name));
+		}
+
+		/* try to create a new kernel client. */
+		pd->client =
+		    ass_create_kernel_client(pd->rx_fd, pd->tx_fd, pd->name, pd->subunit);
+	}
+}
+
+void *
 autodetect_watchdog(void *arg)
 {
 	struct ass_filter *pf;
-	struct ass_client *pc;
+	struct ass_device *pd;
 
 	while (1) {
 		char *devices[ASS_MAX_FILTER];
@@ -86,6 +222,9 @@ autodetect_watchdog(void *arg)
 		struct dirent *dp;
 		DIR *dirp;
 		char *str;
+
+		if (TAILQ_FIRST(&ass_filter_head) == NULL)
+			goto wait;
 
 		dirp = opendir("/dev/");
 		if (dirp == NULL)
@@ -96,7 +235,6 @@ autodetect_watchdog(void *arg)
 			case DT_CHR:
 				if (asprintf(&str, "/dev/%s", dp->d_name) < 0)
 					break;
-				ass_lock();
 				if (count < ASS_MAX_FILTER) {
 					TAILQ_FOREACH(pf, &ass_filter_head, entry) {
 						if (strstr(dp->d_name, pf->filter) ==
@@ -109,8 +247,6 @@ autodetect_watchdog(void *arg)
 						}
 					}
 				}
-				ass_unlock();
-
 				free(str);
 				break;
 			default:
@@ -124,40 +260,40 @@ autodetect_watchdog(void *arg)
 
 		mergesort(devices, count, sizeof(devices[0]), &autodetect_compare);
 
-		ass_lock();
-		TAILQ_FOREACH(pc, &ass_client_head, entry) {
-			if (pc->type != KERNEL_CLIENT)
-				continue;
-			autodetect_find(devices, count, found, &pc->rx_name);
-			autodetect_find(devices, count, found, &pc->tx_name);
+		TAILQ_FOREACH(pd, &ass_device_head, entry) {
+			autodetect_find(devices, count, found, &pd->rx_name);
+			autodetect_find(devices, count, found, &pd->tx_name);
 		}
-		ass_unlock();
 
 		while (count--) {
 			if (found[count] == true ||
-			    ass_create_kernel_client(
-			        SNDRV_SEQ_PORT_CAP_WRITE |
-				SNDRV_SEQ_PORT_CAP_READ |
-				SNDRV_SEQ_PORT_CAP_SYNC_READ |
-				SNDRV_SEQ_PORT_CAP_SYNC_WRITE |
-				SNDRV_SEQ_PORT_CAP_DUPLEX |
-				SNDRV_SEQ_PORT_CAP_SUBS_READ |
-				SNDRV_SEQ_PORT_CAP_SUBS_WRITE,
-				devices[count], devices[count]) == NULL) {
+			    new_device(devices[count], devices[count]) != 0)
 				free(devices[count]);
-			}
 		}
 	wait:
-		usleep(4000000);
+		TAILQ_FOREACH(pd, &ass_device_head, entry)
+			device_watchdog(pd);
+
+		usleep(1000000);
 	}
 }
 
-void
-autodetect_init(void)
+int
+new_device(char *rx_name, char *tx_name)
 {
-	pthread_t td;
+	struct ass_device *pd;
 
-	if (TAILQ_FIRST(&ass_filter_head) == NULL)
-		return;
-	pthread_create(&td, NULL, &autodetect_watchdog, NULL);
+	pd = malloc(sizeof(*pd));
+	if (pd == NULL)
+		return (ENOMEM);
+
+	memset(pd, 0, sizeof(*pd));
+
+	pd->rx_name = rx_name;
+	pd->tx_name = tx_name;
+	pd->rx_fd = -1;
+	pd->tx_fd = -1;
+
+	TAILQ_INSERT_TAIL(&ass_device_head, pd, entry);
+	return (0);
 }
