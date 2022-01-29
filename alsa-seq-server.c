@@ -954,8 +954,8 @@ ass_client_notify_subscription(struct ass_client *client,
 	memset(&event, 0, sizeof(event));
 	event.type = evtype;
 	event.flags = SNDRV_SEQ_EVENT_LENGTH_FIXED;
-	event.source.client = -1;
-	event.source.port = -1;
+	event.source.client = SNDRV_SEQ_CLIENT_SYSTEM;
+	event.source.port = SNDRV_SEQ_PORT_SYSTEM_ANNOUNCE;
 	event.dest.client = dst_client;
 	event.dest.port = dst_port;
 	event.data.connect.dest = info->dest;
@@ -1405,6 +1405,9 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 		error = ass_port_get_subscription(&port->c_src, &data.psubs.dest, &data.psubs);
 		break;
 	case SNDRV_SEQ_IOCTL_SUBSCRIBE_PORT:
+		/* Fake success for system subscriptions. */
+		if (data.psubs.sender.client == SNDRV_SEQ_CLIENT_SYSTEM)
+			break;
 		if ((receiver = ass_client_by_number(data.psubs.dest.client)) == NULL ||
 		    (sender = ass_client_by_number(data.psubs.sender.client)) == NULL ||
 		    (sport = ass_port_by_number(sender, data.psubs.sender.port)) == NULL ||
@@ -1418,6 +1421,9 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 		error = ass_port_connect(pass, sender, sport, receiver, dport, &data.psubs);
 		break;
 	case SNDRV_SEQ_IOCTL_UNSUBSCRIBE_PORT:
+		/* Fake success for system unsubscriptions. */
+		if (data.psubs.sender.client == SNDRV_SEQ_CLIENT_SYSTEM)
+			break;
 		if ((receiver = ass_client_by_number(data.psubs.dest.client)) == NULL ||
 		    (sender = ass_client_by_number(data.psubs.sender.client)) == NULL ||
 		    (sport = ass_port_by_number(sender, data.psubs.sender.port)) == NULL ||
@@ -1521,12 +1527,29 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 	return (error);
 }
 
+static void
+ass_client_number_alloc(struct ass_client *pass)
+{
+	struct ass_client *pother;
+	bool loop;
+
+	do {
+		loop = false;
+		if (pass->number == SNDRV_SEQ_CLIENT_SYSTEM)
+			pass->number++;
+		TAILQ_FOREACH(pother, &ass_client_head, entry) {
+			if (pother->number == pass->number) {
+				pass->number++;
+				loop = true;
+			}
+		}
+	} while (loop);
+}
+
 static int
 ass_open(struct cuse_dev *pdev, int fflags)
 {
 	struct ass_client *pass;
-	struct ass_client *pother;
-	bool loop;
 
 	pass = malloc(sizeof(*pass));
 	if (pass == NULL)
@@ -1537,15 +1560,7 @@ ass_open(struct cuse_dev *pdev, int fflags)
 	cuse_dev_set_per_file_handle(pdev, pass);
 
 	ass_lock();
-	do {
-		loop = false;
-		TAILQ_FOREACH(pother, &ass_client_head, entry) {
-			if (pother->number == pass->number) {
-				pass->number++;
-				loop = true;
-			}
-		}
-	} while (loop);
+	ass_client_number_alloc(pass);
 
 	if (pass->number >= ASS_MAX_CLIENTS) {
 		ass_unlock();
@@ -1611,10 +1626,8 @@ struct ass_client *
 ass_create_kernel_client(int rx_fd, int tx_fd, const char *name, int subunit)
 {
 	struct ass_client *pass;
-	struct ass_client *pother;
 	struct ass_port *port;
 	unsigned caps;
-	bool loop;
 
 	pass = malloc(sizeof(*pass));
 	if (pass == NULL)
@@ -1638,15 +1651,7 @@ ass_create_kernel_client(int rx_fd, int tx_fd, const char *name, int subunit)
 	}
 
 	ass_lock();
-	do {
-		loop = false;
-		TAILQ_FOREACH(pother, &ass_client_head, entry) {
-			if (pother->number == pass->number) {
-				pass->number++;
-				loop = true;
-			}
-		}
-	} while (loop);
+	ass_client_number_alloc(pass);
 
 	if (pass->number >= ASS_MAX_CLIENTS) {
 		ass_unlock();
