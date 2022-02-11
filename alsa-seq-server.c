@@ -1414,6 +1414,7 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 			break;
 		}
 		ass_set_port_info(port, &data.pinfo);
+		ass_broadcast_port_event(SNDRV_SEQ_EVENT_PORT_CHANGE, port->addr.client, port->addr.port);
 		break;
 	case SNDRV_SEQ_IOCTL_GET_SUBSCRIPTION:
 		pother = ass_client_by_number(data.psubs.sender.client);
