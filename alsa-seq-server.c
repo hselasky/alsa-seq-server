@@ -330,11 +330,10 @@ ass_port_by_number(struct ass_client *pass, int number)
 }
 
 static struct ass_client *
-ass_get_event_dest_client(struct snd_seq_event *event, int filter)
+ass_get_event_dest_client(struct ass_client *dest, struct snd_seq_event *event, int filter)
 {
-	struct ass_client *dest;
-
-	dest = ass_client_by_number(event->dest.client);
+	if (dest == NULL || dest->number != event->dest.client)
+		dest = ass_client_by_number(event->dest.client);
 	if (dest == NULL)
 		return (NULL);
 	if (!dest->accept_input)
@@ -596,7 +595,7 @@ ass_deliver_single_event(struct ass_client *client,
 	struct ass_client *dest;
 	struct ass_port *dest_port;
 
-	dest = ass_get_event_dest_client(event, filter);
+	dest = ass_get_event_dest_client(client, event, filter);
 	if (dest == NULL)
 		return;
 	dest_port = ass_port_by_number(dest, event->dest.port);
@@ -799,6 +798,28 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 	ass_unlock();
 
 	return (retval);
+}
+
+static void
+ass_broadcast_port_event(int evtype, int client, int port)
+{
+	struct ass_client *pass;
+	struct snd_seq_event event;
+
+	memset(&event, 0, sizeof(event));
+	event.type = evtype;
+	event.flags = SNDRV_SEQ_EVENT_LENGTH_FIXED;
+	event.source.client = SNDRV_SEQ_CLIENT_SYSTEM;
+	event.source.port = SNDRV_SEQ_PORT_SYSTEM_ANNOUNCE;
+	event.data.addr.client = client;
+	event.data.addr.port = port;
+
+	TAILQ_FOREACH(pass, &ass_client_head, entry) {
+		if (pass->type != USER_CLIENT)
+			continue;
+		event.dest.client = pass->number;
+		ass_deliver_single_event(pass, &event, 0);
+	}
 }
 
 static struct ass_port *
@@ -1119,6 +1140,8 @@ ass_delete_port(struct ass_client *client, struct ass_port *port)
 	assert(port->c_src.count == 0);
 	assert(port->c_dst.count == 0);
 
+	ass_broadcast_port_event(SNDRV_SEQ_EVENT_PORT_EXIT, port->addr.client, port->addr.port);
+
 	TAILQ_REMOVE(&client->head, port, entry);
 	client->num_ports--;
 
@@ -1350,6 +1373,7 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 		}
 		data.pinfo.addr = port->addr;
 		ass_set_port_info(port, &data.pinfo);
+		ass_broadcast_port_event(SNDRV_SEQ_EVENT_PORT_START, port->addr.client, port->addr.port);
 		break;
 	case SNDRV_SEQ_IOCTL_DELETE_PORT:
 		if (pass->number != data.pinfo.addr.client) {
@@ -1685,6 +1709,7 @@ ass_create_kernel_client(int rx_fd, int tx_fd, const char *name, int subunit)
 	port->midi_channels = 16;
 	snprintf(port->name, sizeof(port->name), "port-%d", subunit);
 	TAILQ_INSERT_TAIL(&ass_client_head, pass, entry);
+	ass_broadcast_port_event(SNDRV_SEQ_EVENT_PORT_START, port->addr.client, port->addr.port);
 	ass_wakeup();
 	ass_unlock();
 	return (pass);
