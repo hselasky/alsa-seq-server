@@ -1476,6 +1476,15 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 		break;
 	case SNDRV_SEQ_IOCTL_REMOVE_EVENTS:
 		break;
+	case SNDRV_SEQ_IOCTL_CREATE_QUEUE:
+		data.qinfo.queue = 0;
+		break;
+	case SNDRV_SEQ_IOCTL_DELETE_QUEUE:
+		if (data.qinfo.queue != 0) {
+			error = CUSE_ERR_INVALID;
+			break;
+		}
+		break;
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_STATUS:
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_TEMPO:
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_TEMPO:
@@ -1483,8 +1492,6 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_TIMER:
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_CLIENT:
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_CLIENT:
-	case SNDRV_SEQ_IOCTL_CREATE_QUEUE:
-	case SNDRV_SEQ_IOCTL_DELETE_QUEUE:
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_INFO:
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_INFO:
 	case SNDRV_SEQ_IOCTL_GET_NAMED_QUEUE:
