@@ -54,8 +54,10 @@
 
 #define	ASS_MAX_PORTS 16
 #define	ASS_MAX_CLIENTS 32
-#define	ASS_MAX_QUEUES 0
+#define	ASS_MAX_QUEUES ASS_MAX_CLIENTS
 #define	ASS_MAX_FILTER 256
+
+#define	ASS_MIN(a,b) (((a) > (b)) ? (a) : (b))
 
 #ifdef HAVE_DEBUG
 #define	DPRINTF(fmt, ...) printf("%s:%d: " fmt, __FUNCTION__, __LINE__,## __VA_ARGS__)
@@ -83,6 +85,43 @@ struct ass_fifo {
 	unsigned int producer;
 	unsigned int consumer;
 	struct snd_seq_event data[ASS_FIFO_MAX];
+};
+
+struct ass_event;
+typedef TAILQ_ENTRY(ass_event) ass_event_entry_t;
+typedef TAILQ_HEAD(ass_event_head, ass_event) ass_event_head_t;
+
+struct ass_event {
+	ass_event_entry_t entry;
+	struct snd_seq_event event;
+};
+
+struct ass_queue {
+	ass_event_head_t head_real;	/* absolute time only queue */
+	ass_event_head_t head_tick;	/* absolute ticks only queue */
+	char name[64];
+	struct snd_seq_real_time last_time_low;
+	uint32_t last_time_high;
+	struct snd_seq_real_time cur_time;
+	snd_seq_tick_time_t cur_tick;
+	uint64_t ns_tick;	/* ns per tick */
+	uint64_t ns_rem;	/* ns remainder per tick */
+	int owner; /* owner of queue */
+	int flags;
+#if ASS_MAX_CLIENTS > 32
+#error "Please update the size of clients_bitmap and code using this field"
+#endif
+	unsigned tempo;
+	unsigned ppq;
+	unsigned skew_value;
+	unsigned skew_base;
+	unsigned resolution;	/* dummy */
+	unsigned clients;
+	unsigned clients_bitmap;
+	unsigned events;
+	unsigned running:1;
+	unsigned allocated:1;
+	unsigned locked:1;
 };
 
 struct ass_subscribers {
@@ -139,6 +178,8 @@ struct ass_client {
 	unsigned int filter;
 	uint8_t	event_filter[256 / 8];
 	int	event_lost;
+	int	output_used;	/* used queue events */
+	int	output_room;	/* used for polling */
 	int	num_ports;
 	int	convert32;
 	struct ass_fifo rx_fifo;
@@ -147,15 +188,38 @@ struct ass_client {
 	int	tx_fd;
 };
 
+extern pthread_mutex_t ass_mtx;
+
 /* Kernel support */
 
 extern struct ass_client *ass_create_kernel_client(int, int, const char *, int);
 extern void ass_free_client(struct ass_client *);
+extern struct ass_client * ass_client_by_number(int);
+extern void ass_deliver_to_subscribers(struct ass_client *, struct snd_seq_event *);
 
 /* Autodetect support */
 
 extern int new_device(char *, char *);
 extern void *autodetect_watchdog(void *);
 extern void autodetect_filter_add(const char *);
+
+/* Queue support */
+
+extern void ass_queue_init(void);
+extern int ass_queue_create(struct ass_client *, struct snd_seq_queue_info *);
+extern int ass_queue_delete(struct ass_client *, struct snd_seq_queue_info *);
+extern void ass_queue_filter_events(const struct snd_seq_event *);
+extern void ass_queue_deliver_to_subscribers(struct ass_client *, const struct snd_seq_event *);
+extern int ass_queue_get_info(struct ass_client *, struct snd_seq_queue_info *);
+extern int ass_queue_set_info(struct ass_client *, struct snd_seq_queue_info *);
+extern int ass_queue_by_name(struct ass_client *, struct snd_seq_queue_info *);
+extern int ass_queue_get_status(struct ass_client *, struct snd_seq_queue_status *);
+extern int ass_queue_get_tempo(struct ass_client *, struct snd_seq_queue_tempo *);
+extern int ass_queue_set_tempo(struct ass_client *, struct snd_seq_queue_tempo *);
+extern int ass_queue_get_timer(struct ass_client *, struct snd_seq_queue_timer *);
+extern int ass_queue_set_timer(struct ass_client *, struct snd_seq_queue_timer *);
+extern int ass_queue_get_client(struct ass_client *, struct snd_seq_queue_client *);
+extern int ass_queue_set_client(struct ass_client *, struct snd_seq_queue_client *);
+extern void ass_queue_cleanup(int);
 
 #endif		/* _ALSA_SEQ_SERVER_H_ */

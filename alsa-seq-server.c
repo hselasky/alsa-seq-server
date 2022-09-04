@@ -41,7 +41,7 @@
 
 #include <cuse.h>
 
-static pthread_mutex_t ass_mtx;
+pthread_mutex_t ass_mtx;
 static pthread_cond_t ass_cv;
 static uid_t uid;
 static gid_t gid;
@@ -299,7 +299,7 @@ ass_fifo_pull(struct ass_fifo *fifo, struct snd_seq_event *event)
 	return (true);
 }
 
-static struct ass_client *
+struct ass_client *
 ass_client_by_number(int number)
 {
 	struct ass_client *pass;
@@ -613,12 +613,14 @@ ass_deliver_single_event(struct ass_client *client,
 	}
 }
 
-static void
+void
 ass_deliver_to_subscribers(struct ass_client *client,
     struct snd_seq_event *event)
 {
 	struct ass_subscribers *subs;
 	struct ass_port *src_port;
+
+	ass_queue_filter_events(event);
 
 	src_port = ass_port_by_number(client, event->source.port);
 	if (src_port == NULL)
@@ -772,7 +774,29 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 						x = sizeof(temp.data.ext.ptr);
 					temp.data.ext.len = x;
 					memcpy(&temp.data.ext.ptr, var_data + off, x);
-					ass_deliver_to_subscribers(pass, &temp);
+
+					if (temp.queue != SNDRV_SEQ_QUEUE_DIRECT) {
+						while (pass->output_used == ASS_FIFO_MAX) {
+							if (fflags & CUSE_FFLAG_NONBLOCK) {
+								if (retval == 0)
+									retval = CUSE_ERR_WOULDBLOCK;
+								goto done;
+							}
+							if (cuse_got_peer_signal() == 0) {
+								if (retval == 0)
+									retval = CUSE_ERR_SIGNAL;
+								goto done;
+							}
+							pass->tx_busy = 1;
+							ass_unlock();
+							usleep(10000);	/* wait 10ms */
+							ass_lock();
+							pass->tx_busy = 0;
+						}
+						ass_queue_deliver_to_subscribers(pass, &temp);
+					} else {
+						ass_deliver_to_subscribers(pass, &temp);
+					}
 				}
 			}
 		} else {
@@ -781,14 +805,38 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 			/* check if event should be delivered */
 			if (temp.type != SNDRV_SEQ_EVENT_NONE &&
 			    temp.type != SNDRV_SEQ_EVENT_SYSEX &&
-			    temp.type != SNDRV_SEQ_EVENT_BOUNCE)
-				ass_deliver_to_subscribers(pass, &temp);
+			    temp.type != SNDRV_SEQ_EVENT_BOUNCE) {
+
+				if (temp.queue != SNDRV_SEQ_QUEUE_DIRECT) {
+					while (pass->output_used == ASS_FIFO_MAX) {
+						if (fflags & CUSE_FFLAG_NONBLOCK) {
+							if (retval == 0)
+								retval = CUSE_ERR_WOULDBLOCK;
+							goto done;
+						}
+						if (cuse_got_peer_signal() == 0) {
+							if (retval == 0)
+								retval = CUSE_ERR_SIGNAL;
+							goto done;
+						}
+						pass->tx_busy = 1;
+						ass_unlock();
+						usleep(10000);	/* wait 10ms */
+						ass_lock();
+						pass->tx_busy = 0;
+					}
+					ass_queue_deliver_to_subscribers(pass, &temp);
+				} else {
+					ass_deliver_to_subscribers(pass, &temp);
+				}
+			}
 		}
 
 		peer_ptr = (const uint8_t *)peer_ptr + delta;
 		retval += delta;
 		len -= delta;
 	}
+done:
 	ass_unlock();
 
 	return (retval);
@@ -1234,8 +1282,8 @@ ass_get_client_pool(struct ass_client *client, struct snd_seq_client_pool *info)
 	memset(info, 0, sizeof(*info));
 	info->client = pother->number;
 	info->output_pool = ASS_FIFO_MAX;
-	info->output_room = 0;
-	info->output_free = ASS_FIFO_MAX - info->output_room;
+	info->output_room = pother->output_room;
+	info->output_free = ASS_FIFO_MAX - pother->output_used;
 
 	if (pother->type == USER_CLIENT) {
 		info->input_pool = ASS_FIFO_MAX;
@@ -1254,6 +1302,10 @@ ass_set_client_pool(struct ass_client *client, struct snd_seq_client_pool *info)
 	if (client->number != info->client)
 		return (CUSE_ERR_INVALID);
 
+	if (info->output_room >= 1 &&
+	    info->output_room <= ASS_FIFO_MAX) {
+		client->output_room  = info->output_room;
+        }
 	return (ass_get_client_pool(client, info));
 }
 
@@ -1531,25 +1583,40 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 	case SNDRV_SEQ_IOCTL_REMOVE_EVENTS:
 		break;
 	case SNDRV_SEQ_IOCTL_CREATE_QUEUE:
-		data.qinfo.queue = 0;
+		error = ass_queue_create(pass, &data.qinfo);
 		break;
 	case SNDRV_SEQ_IOCTL_DELETE_QUEUE:
-		if (data.qinfo.queue != 0) {
-			error = CUSE_ERR_INVALID;
-			break;
-		}
+		error = ass_queue_delete(pass, &data.qinfo);
 		break;
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_STATUS:
+		error = ass_queue_get_status(pass, &data.qstatus);
+		break;
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_TEMPO:
+		error = ass_queue_get_tempo(pass, &data.qtempo);
+		break;
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_TEMPO:
+		error = ass_queue_set_tempo(pass, &data.qtempo);
+		break;
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_TIMER:
+		error = ass_queue_get_timer(pass, &data.qtimer);
+		break;
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_TIMER:
+		error = ass_queue_set_timer(pass, &data.qtimer);
+		break;
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_CLIENT:
+		error = ass_queue_get_client(pass, &data.qclient);
+		break;
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_CLIENT:
+		error = ass_queue_set_client(pass, &data.qclient);
+		break;
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_INFO:
+		error = ass_queue_get_info(pass, &data.qinfo);
+		break;
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_INFO:
+		error = ass_queue_set_info(pass, &data.qinfo);
+		break;
 	case SNDRV_SEQ_IOCTL_GET_NAMED_QUEUE:
-		error = CUSE_ERR_INVALID;
+		error = ass_queue_by_name(pass, &data.qinfo);
 		break;
 	case SNDRV_SEQ_IOCTL_SET_CLIENT_POOL:
 		error = ass_set_client_pool(pass, &data.cpool);
@@ -1638,6 +1705,7 @@ ass_open(struct cuse_dev *pdev, int fflags)
 		pass->accept_input = 1;
 	if (fflags & FWRITE)
 		pass->accept_output = 1;
+	pass->output_room = 1;
 	TAILQ_INIT(&pass->head);
 	snprintf(pass->name, sizeof(pass->name), "Client-%d", pass->number);
 	TAILQ_INSERT_TAIL(&ass_client_head, pass, entry);
@@ -1680,7 +1748,8 @@ ass_poll(struct cuse_dev *pdev, int fflags, int events)
 	}
 	if (events & CUSE_POLL_WRITE) {
 		if (pass->accept_output) {
-			retval |= CUSE_POLL_WRITE;
+			if ((ASS_FIFO_MAX - pass->output_used) >= pass->output_room)
+				retval |= CUSE_POLL_WRITE;
 		}
 	}
 	ass_unlock();
@@ -1759,6 +1828,7 @@ ass_free_client(struct ass_client *pass)
 	while ((port = TAILQ_FIRST(&pass->head)))
 		ass_delete_port(pass, port);
 	TAILQ_REMOVE(&ass_client_head, pass, entry);
+	ass_queue_cleanup(pass->number);
 	ass_unlock();
 
 	free(pass);
@@ -1803,6 +1873,7 @@ ass_midi_process(void *arg)
 			if ((pfd[n].revents & POLLIN) != 0 && (pfd[n].fd == pass->rx_fd)) {
 				while (ass_receive_synth_event(&temp, &pass->parse, pass->rx_fd)) {
 					temp.source.client = pass->number;
+					temp.queue = SNDRV_SEQ_QUEUE_DIRECT;
 					ass_deliver_to_subscribers(pass, &temp);
 				}
 			}
@@ -1933,6 +2004,8 @@ main(int argc, char **argv)
 	signal(SIGHUP, ass_hup);
 
 	ass_init();
+
+	ass_queue_init();
 
 	if (cuse_init() != 0)
 		errx(EX_USAGE, "Could not connect to cuse module");

@@ -47,7 +47,8 @@ CFLAGS+=	-g
 LDFLAGS+=	-lcuse
 
 SRCS=		autodetect.c \
-		alsa-seq-server.c
+		alsa-seq-server.c \
+		queue.c
 
 .if defined(HAVE_MAN)
 MAN=		alsa-seq-server.8
