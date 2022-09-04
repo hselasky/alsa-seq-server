@@ -270,17 +270,11 @@ ass_fifo_empty(struct ass_fifo *fifo)
 	return (fifo->producer == fifo->consumer);
 }
 
-#if 0
-static	bool
-ass_fifo_full(struct ass_fifo *fifo)
+static unsigned
+ass_fifo_size(struct ass_fifo *fifo)
 {
-	unsigned size = fifo->producer - fifo->consumer;
-
-	if (size >= ASS_FIFO_MAX)
-		return (true);
-	return (false);
+	return (fifo->producer - fifo->consumer);
 }
-#endif
 
 static bool
 ass_fifo_push(struct ass_fifo *fifo, struct snd_seq_event *event)
@@ -1229,6 +1223,41 @@ ass_get_client_info(struct ass_client *client,
 }
 
 static int
+ass_get_client_pool(struct ass_client *client, struct snd_seq_client_pool *info)
+{
+	struct ass_client *pother;
+
+	pother = ass_client_by_number(info->client);
+	if (pother == NULL)
+		return (CUSE_ERR_OTHER);
+
+	memset(info, 0, sizeof(*info));
+	info->client = pother->number;
+	info->output_pool = ASS_FIFO_MAX;
+	info->output_room = 0;
+	info->output_free = ASS_FIFO_MAX - info->output_room;
+
+	if (pother->type == USER_CLIENT) {
+		info->input_pool = ASS_FIFO_MAX;
+		info->input_free = ASS_FIFO_MAX -
+		    ass_fifo_size(&pother->rx_fifo);
+	} else {
+		info->input_pool = 0;
+		info->input_free = 0;
+	}
+	return (0);
+}
+
+static int
+ass_set_client_pool(struct ass_client *client, struct snd_seq_client_pool *info)
+{
+	if (client->number != info->client)
+		return (CUSE_ERR_INVALID);
+
+	return (ass_get_client_pool(client, info));
+}
+
+static int
 ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 {
 	struct ass_client *pass;
@@ -1520,8 +1549,13 @@ ass_ioctl(struct cuse_dev *pdev, int fflags, unsigned long cmd, void *peer_data)
 	case SNDRV_SEQ_IOCTL_GET_QUEUE_INFO:
 	case SNDRV_SEQ_IOCTL_SET_QUEUE_INFO:
 	case SNDRV_SEQ_IOCTL_GET_NAMED_QUEUE:
-	case SNDRV_SEQ_IOCTL_GET_CLIENT_POOL:
 		error = CUSE_ERR_INVALID;
+		break;
+	case SNDRV_SEQ_IOCTL_SET_CLIENT_POOL:
+		error = ass_set_client_pool(pass, &data.cpool);
+		break;
+	case SNDRV_SEQ_IOCTL_GET_CLIENT_POOL:
+		error = ass_get_client_pool(pass, &data.cpool);
 		break;
 	case SNDRV_SEQ_IOCTL_RUNNING_MODE:
 		pother = ass_client_by_number(data.rinfo.client);
