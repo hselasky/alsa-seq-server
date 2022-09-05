@@ -607,7 +607,8 @@ ass_check_port_perm(struct ass_port *port, unsigned int flags)
 
 static void
 ass_deliver_single_event(struct ass_client *client,
-    struct snd_seq_event *event, int filter)
+    struct snd_seq_event *event, int filter,
+    struct ass_subscribers *subs)
 {
 	struct ass_client *dest;
 	struct ass_port *dest_port;
@@ -620,6 +621,18 @@ ass_deliver_single_event(struct ass_client *client,
 		return;
 	if (!ass_check_port_perm(dest_port, SNDRV_SEQ_PORT_CAP_WRITE))
 		return;
+
+	/* check if destination port requests a timestamp */
+	if (dest_port->timestamping == 0 ||
+	    ass_queue_update_timestamp(dest_port->time_queue, dest_port->time_real, event) == false) {
+		/* check if subscription requests a timestamp */
+		if (subs == NULL ||
+		    (subs->info.flags & SNDRV_SEQ_PORT_SUBS_TIMESTAMP) == 0 ||
+		    ass_queue_update_timestamp(subs->info.queue,
+		    (subs->info.flags & SNDRV_SEQ_PORT_SUBS_TIME_REAL) != 0, event) == false) {
+			/* don't timestamp */
+		}
+	}
 
 	switch (dest->type) {
 	case USER_CLIENT:
@@ -649,11 +662,22 @@ ass_deliver_to_subscribers(struct ass_client *client,
 	if (src_port == NULL)
 		return;
 
-	TAILQ_FOREACH(subs, &src_port->c_src.head, src_entry) {
-		if (subs->ref_count != 2)
-			continue;
-		event->dest = subs->info.dest;
-		ass_deliver_single_event(client, event, 0);
+	switch (event->type) {
+	case SNDRV_SEQ_EVENT_ECHO:
+		/* handle echo requests here */
+		event->dest = event->source;
+		if (ass_check_port_perm(src_port, SNDRV_SEQ_PORT_CAP_WRITE) &&
+		    ass_fifo_push(&client->rx_fifo, event) == false)
+			client->event_lost++;
+		break;
+	default:
+		TAILQ_FOREACH(subs, &src_port->c_src.head, src_entry) {
+			if (subs->ref_count != 2)
+				continue;
+			event->dest = subs->info.dest;
+			ass_deliver_single_event(client, event, 0, subs);
+		}
+		break;
 	}
 }
 
@@ -889,7 +913,7 @@ ass_broadcast_port_event(int evtype, int client, int port)
 		if (pass->type != USER_CLIENT)
 			continue;
 		event.dest.client = pass->number;
-		ass_deliver_single_event(pass, &event, 0);
+		ass_deliver_single_event(pass, &event, 0, NULL);
 	}
 }
 
@@ -1054,7 +1078,7 @@ ass_client_notify_subscription(struct ass_client *client,
 	event.data.connect.sender = info->sender;
 	event.queue = SNDRV_SEQ_QUEUE_DIRECT;
 
-	ass_deliver_single_event(client, &event, 0);
+	ass_deliver_single_event(client, &event, 0, NULL);
 }
 
 static int

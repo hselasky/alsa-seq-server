@@ -207,6 +207,7 @@ extern void autodetect_filter_add(const char *);
 extern void ass_queue_init(void);
 extern int ass_queue_create(struct ass_client *, struct snd_seq_queue_info *);
 extern int ass_queue_delete(struct ass_client *, struct snd_seq_queue_info *);
+extern bool ass_queue_update_timestamp(int queue, bool is_real, struct snd_seq_event *);
 extern void ass_queue_filter_events(const struct snd_seq_event *);
 extern void ass_queue_deliver_to_subscribers(struct ass_client *, const struct snd_seq_event *);
 extern int ass_queue_get_info(struct ass_client *, struct snd_seq_queue_info *);

@@ -379,6 +379,31 @@ ass_queue_timer_event_setpos_tick(int client, int queue, snd_seq_tick_time_t tic
 	ass_queue_wakeup();
 }
 
+bool
+ass_queue_update_timestamp(int queue, bool is_real, struct snd_seq_event *event)
+{
+	struct ass_queue *pq;
+
+	pq = ass_queue_by_index(queue);
+	if (pq == NULL)
+		return (false);
+
+	ass_queue_update_time();
+	ass_queue_update_real_time_and_ticks(pq);
+
+	event->queue = queue;
+	event->flags &= ~(SNDRV_SEQ_TIME_STAMP_MASK | SNDRV_SEQ_TIME_MODE_MASK);
+
+	if (is_real) {
+		event->time.time = pq->cur_time;
+		event->flags |= SNDRV_SEQ_TIME_STAMP_REAL | SNDRV_SEQ_TIME_MODE_ABS;
+	} else {
+		event->time.tick = pq->cur_tick;
+		event->flags |= SNDRV_SEQ_TIME_STAMP_TICK | SNDRV_SEQ_TIME_MODE_ABS;
+	}
+	return (true);
+}
+
 static void
 ass_queue_timer_event_setpos_time(int client, int queue, struct snd_seq_real_time time)
 {
