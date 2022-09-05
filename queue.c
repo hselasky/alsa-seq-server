@@ -545,7 +545,7 @@ ass_queue_find_by_name(const char *name, size_t len)
 }
 
 static bool
-ass_queue_event_is_after_tick(const struct ass_event *pa, const struct ass_event *pb)
+ass_queue_event_is_gte_tick(const struct ass_event *pa, const struct ass_event *pb)
 {
 	int diff = pa->event.time.tick - pb->event.time.tick;
 
@@ -553,7 +553,7 @@ ass_queue_event_is_after_tick(const struct ass_event *pa, const struct ass_event
 }
 
 static bool
-ass_queue_event_is_after_real(const struct ass_event *pa, const struct ass_event *pb)
+ass_queue_event_is_gte_real(const struct ass_event *pa, const struct ass_event *pb)
 {
 	struct snd_seq_real_time diff;
 
@@ -597,14 +597,14 @@ ass_queue_deliver_to_subscribers(struct ass_client *pass, const struct snd_seq_e
 		for (pother = TAILQ_LAST(&pq->head_tick, ass_event_head); pother != 0;
 		    pother = TAILQ_PREV(pother, ass_event_head, entry)) {
 
-			if (ass_queue_event_is_after_tick(pev, pother)) {
+			if (ass_queue_event_is_gte_tick(pev, pother)) {
 				TAILQ_INSERT_AFTER(&pq->head_tick, pother, pev, entry);
 				return;
 			}
 		}
 
 		pother = TAILQ_FIRST(&pq->head_tick);
-		if (pother == NULL || ass_queue_event_is_after_tick(pev, pother) == false) {
+		if (pother == NULL || ass_queue_event_is_gte_tick(pev, pother) == false) {
 			TAILQ_INSERT_HEAD(&pq->head_tick, pev, entry);
 			ass_queue_wakeup();
 		} else {
@@ -626,14 +626,14 @@ ass_queue_deliver_to_subscribers(struct ass_client *pass, const struct snd_seq_e
 		for (pother = TAILQ_LAST(&pq->head_real, ass_event_head); pother != 0;
 		    pother = TAILQ_PREV(pother, ass_event_head, entry)) {
 
-			if (ass_queue_event_is_after_real(pev, pother)) {
+			if (ass_queue_event_is_gte_real(pev, pother)) {
 				TAILQ_INSERT_AFTER(&pq->head_real, pother, pev, entry);
 				return;
 			}
 		}
 
 		pother = TAILQ_FIRST(&pq->head_real);
-		if (pother == NULL || ass_queue_event_is_after_real(pev, pother) == false) {
+		if (pother == NULL || ass_queue_event_is_gte_real(pev, pother) == false) {
 			TAILQ_INSERT_HEAD(&pq->head_real, pev, entry);
 			ass_queue_wakeup();
 		} else {
