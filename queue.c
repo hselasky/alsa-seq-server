@@ -268,8 +268,8 @@ static void
 ass_queue_timer_update(struct ass_queue *pq)
 {
 	pq->ns_tick =
-	    ((uint64_t)pq->tempo * 1000ULL * (uint64_t)pq->skew_value) /
-	    ((uint64_t)pq->ppq * (uint64_t)pq->skew_base);
+	    ((uint64_t)pq->tempo * 1000ULL * (uint64_t)pq->skew_base) /
+	    ((uint64_t)pq->ppq * (uint64_t)pq->skew_value);
 }
 
 static void
