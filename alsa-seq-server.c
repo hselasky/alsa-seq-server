@@ -73,8 +73,14 @@ static const uint8_t ass_cmd_to_len[16] = {
 static void
 ass_init(void)
 {
+	pthread_condattr_t attr;
+
 	pthread_mutex_init(&ass_mtx, NULL);
-	pthread_cond_init(&ass_cv, NULL);
+
+	pthread_condattr_init(&attr);
+	pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	pthread_cond_init(&ass_cv, &attr);
+	pthread_condattr_destroy(&attr);
 }
 
 static void
@@ -93,6 +99,23 @@ static void
 ass_wait(void)
 {
 	pthread_cond_wait(&ass_cv, &ass_mtx);
+}
+
+static void
+ass_wait_timeout(uint64_t nsec)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	ts.tv_nsec += nsec % 1000000000ULL;
+	ts.tv_sec += nsec / 1000000000ULL;
+
+	if (ts.tv_nsec >= 1000000000) {
+		ts.tv_nsec -= 1000000000;
+		ts.tv_sec += 1;
+	}
+	pthread_cond_timedwait(&ass_cv, &ass_mtx, &ts);
 }
 
 static void
@@ -667,7 +690,7 @@ ass_read(struct cuse_dev *pdev, int fflags, void *peer_ptr, int len)
 			if (retval != 0)
 				break;
 			pass->rx_busy = 1;
-			ass_wait();
+			ass_wait_timeout(1000000000ULL);
 			pass->rx_busy = 0;
 			if (cuse_got_peer_signal() == 0) {
 				retval = CUSE_ERR_SIGNAL;
