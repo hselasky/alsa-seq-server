@@ -762,7 +762,7 @@ ass_queue_get_status(struct ass_client *client, struct snd_seq_queue_status *sta
 	status->time = pq->cur_time;
 	status->tick = pq->cur_tick;
 	status->running = pq->running;
-	status->flags = pq->flags;
+	status->flags = 0;
 	return (0);
 }
 

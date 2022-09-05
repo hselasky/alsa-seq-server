@@ -107,7 +107,6 @@ struct ass_queue {
 	uint64_t ns_tick;	/* ns per tick */
 	uint64_t ns_rem;	/* ns remainder per tick */
 	int owner; /* owner of queue */
-	int flags;
 #if ASS_MAX_CLIENTS > 32
 #error "Please update the size of clients_bitmap and code using this field"
 #endif
