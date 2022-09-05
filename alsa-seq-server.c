@@ -830,6 +830,11 @@ ass_write(struct cuse_dev *pdev, int fflags, const void *peer_ptr, int len)
 			    temp.type != SNDRV_SEQ_EVENT_SYSEX &&
 			    temp.type != SNDRV_SEQ_EVENT_BOUNCE) {
 
+				/* Handle special case, note on with zero velocity. */
+				if (temp.type == SNDRV_SEQ_EVENT_NOTEON &&
+				    temp.data.note.velocity == 0)
+					temp.type = SNDRV_SEQ_EVENT_NOTEOFF;
+
 				if (temp.queue != SNDRV_SEQ_QUEUE_DIRECT) {
 					while (pass->output_used == ASS_FIFO_MAX) {
 						if (fflags & CUSE_FFLAG_NONBLOCK) {
