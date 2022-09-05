@@ -580,7 +580,6 @@ ass_queue_deliver_to_subscribers(struct ass_client *pass, const struct snd_seq_e
 		return;
 
 	pev->event = *event;
-	pev->event.queue = SNDRV_SEQ_QUEUE_DIRECT;
 
 	switch (pev->event.flags & SNDRV_SEQ_TIME_STAMP_MASK) {
 	case SNDRV_SEQ_TIME_STAMP_TICK:

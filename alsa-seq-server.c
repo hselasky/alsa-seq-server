@@ -883,6 +883,7 @@ ass_broadcast_port_event(int evtype, int client, int port)
 	event.source.port = SNDRV_SEQ_PORT_SYSTEM_ANNOUNCE;
 	event.data.addr.client = client;
 	event.data.addr.port = port;
+	event.queue = SNDRV_SEQ_QUEUE_DIRECT;
 
 	TAILQ_FOREACH(pass, &ass_client_head, entry) {
 		if (pass->type != USER_CLIENT)
@@ -1051,6 +1052,7 @@ ass_client_notify_subscription(struct ass_client *client,
 	event.dest.port = dst_port;
 	event.data.connect.dest = info->dest;
 	event.data.connect.sender = info->sender;
+	event.queue = SNDRV_SEQ_QUEUE_DIRECT;
 
 	ass_deliver_single_event(client, &event, 0);
 }
